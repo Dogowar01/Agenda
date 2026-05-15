@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Agenda" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#141414" />
+  <title>Agenda</title>
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="apple-touch-icon" href="./icon-192.png" />
+  <link rel="apple-touch-icon" sizes="192x192" href="./icon-192.png" />
+  <link rel="apple-touch-icon" sizes="512x512" href="./icon-512.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    html, body, #root { height: 100%; }
+    body { font-family: 'Outfit','Helvetica Neue',Arial,sans-serif; color: #F5F0E8; background: #141414; overscroll-behavior: none; -webkit-font-smoothing: antialiased; }
+    input, textarea, select, button { font-family: inherit; }
+    input[type="date"], input[type="datetime-local"] { color-scheme: dark; }
+    button:active { opacity: 0.72; transform: scale(0.97); }
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+    ::placeholder { color: #555; }
+    select option { background: #1C1C1C; }
+    .sh-r, .sh-l { pointer-events: none; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script type="text/babel">
+const { useState, useEffect, useCallback, useRef } = React;
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const PRIORITY_ORDER = { critical:0, high:1, medium:2, low:3 };
+const PRIORITY_CONFIG = {
+  critical: { label:'Critical', color:'#FF5C5C', bg:'#FF5C5C22' },
+  high:     { label:'High',     color:'#FF9E4A', bg:'#FF9E4A22' },
+  medium:   { label:'Medium',   color:'#F0D060', bg:'#F0D06022' },
+  low:      { label:'Low',      color:'#6DBF6D', bg:'#6DBF6D22' },
+};
+const TYPE_CONFIG = {
+  reminder:    { label:'Reminder', icon:'🔔' },
+  buy:         { label:'Buy',      icon:'🛒' },
+  appointment: { label:'Appt',     icon:'📅' },
+};
+const RECUR_CONFIG = {
+  none:'None', daily:'Daily', weekly:'Weekly',
+  fortnightly:'Fortnightly', monthly:'Monthly', yearly:'Yearly',
+};
+const PROJECT_CATEGORIES = {
+  signal9: { label:'Signal9',  color:'#C084FC', bg:'#C084FC18', icon:'◈' },
+  writing: { label:'Writing',  color:'#60B8F0', bg:'#60B8F018', icon:'✒' },
+  general: { label:'General',  color:'#A0A0A0', bg:'#A0A0A018', icon:'◎' },
+};
+const PROJECT_STATUSES = {
+  active: { label:'Active',   color:'#6DBF6D' },
+  hold:   { label:'On Hold',  color:'#FF9E4A' },
+  done:   { label:'Archived', color:'#555'    },
+};
+
+const ITEMS_KEY    = 'agenda-items-v1';
+const PROJECTS_KEY = 'agenda-projects-v1';
+const NOTIF_KEY    = 'agenda-notif-log-v1';
+const SETTINGS_KEY = 'agenda-settings-v1';
+
+// ── Storage ───────────────────────────────────────────────────────────────────
+
+function load(key, fb) { try { const v=localStorage.getItem(key); return v?JSON.parse(v):fb; } catch { return fb; } }
+function save(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch {} }
+
+// ── Date helpers ──────────────────────────────────────────────────────────────
+
+function startOfDay(d) { return new Date(d.getFullYear(),d.getMonth(),d.getDate()); }
+function dayOf(s)      { return startOfDay(new Date(s)).getTime(); }
+function isOverdue(s)     { if(!s) return false; return dayOf(s)<startOfDay(new Date()).getTime(); }
+function isToday(s)       { if(!s) return false; return dayOf(s)===startOfDay(new Date()).getTime(); }
+function isDueTomorrow(s) { if(!s) return false; const t=new Date(); t.setDate(t.getDate()+1); return dayOf(s)===startOfDay(t).getTime(); }
+
+function formatDate(s) {
+  if (!s) return null;
+  const d=new Date(s), diff=(dayOf(s)-startOfDay(new Date()).getTime())/86400000;
+  const hasTime=s.includes('T')&&s.length>10;
+  const ts=hasTime?d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):null;
+  let label;
+  if(diff===0) label='Today'; else if(diff===1) label='Tomorrow'; else if(diff===-1) label='Yesterday';
+  else if(diff<0) label=`${Math.abs(Math.round(diff))}d ago`;
+  else if(diff<7) label=d.toLocaleDateString([],{weekday:'long'});
+  else label=d.toLocaleDateString([],{day:'numeric',month:'short'});
+  return ts?`${label} · ${ts}`:label;
+}
+
+function sortByPriorityDate(arr) {
+  return [...arr].sort((a,b)=>{
+    const pd=PRIORITY_ORDER[a.priority]-PRIORITY_ORDER[b.priority];
+    if(pd!==0) return pd;
+    if(!a.dueDate&&!b.dueDate) return 0;
+    if(!a.dueDate) return 1; if(!b.dueDate) return -1;
+    return new Date(a.dueDate)-new Date(b.dueDate);
+  });
+}
+
+function getNextDue(dueDate, rec) {
+  if(!dueDate||!rec||rec==='none') return null;
+  const d=new Date(dueDate);
+  if(rec==='daily')       d.setDate(d.getDate()+1);
+  else if(rec==='weekly') d.setDate(d.getDate()+7);
+  else if(rec==='fortnightly') d.setDate(d.getDate()+14);
+  else if(rec==='monthly') d.setMonth(d.getMonth()+1);
+  else if(rec==='yearly')  d.setFullYear(d.getFullYear()+1);
+  const hasTime=dueDate.includes('T')&&dueDate.length>10;
+  return hasTime?d.toISOString().slice(0,16):d.toISOString().slice(0,10);
+}
+
+function recurLabel(r) { if(!r||r==='none') return null; return RECUR_CONFIG[r]||null; }
+
+// ── Notifications ─────────────────────────────────────────────────────────────
+
+function canNotify() { return 'Notification' in window; }
+async function requestNotifPermission() {
+  if(!canNotify()) return false;
+  if(Notification.permission==='granted') return true;
+  if(Notification.permission==='denied') return false;
+  return (await Notification.requestPermission())==='granted';
+}
+function fireNotification(title,body) {
+  if(!canNotify()||Notification.permission!=='granted') return;
+  if(navigator.serviceWorker?.controller) navigator.serviceWorker.controller.postMessage({type:'NOTIFY',title,body});
+  else try{new Notification(title,{body,icon:'./icon-192.png'})}catch{}
+}
+
+// ── SwipeCard ─────────────────────────────────────────────────────────────────
+
+function SwipeCard({onSwipeRight,onSwipeLeft,rightIcon='✓',rightColor='#6DBF6D',children}) {
+  const wrapRef=useRef(null), innerRef=useRef(null), THRESH=72;
+  useEffect(()=>{
+    const wrap=wrapRef.current, inner=innerRef.current; if(!wrap||!inner) return;
+    let sx=0,sy=0,drag=false,cur=0;
+    const hr=()=>wrap.querySelector('.sh-r'), hl=()=>wrap.querySelector('.sh-l');
+    function snap(to,cb){inner.style.transition='transform 0.22s ease';inner.style.transform=`translateX(${to}px)`;const _r=hr(),_l=hl();if(_r)_r.style.opacity='0';if(_l)_l.style.opacity='0';setTimeout(()=>{inner.style.transition='none';inner.style.transform='translateX(0)';if(cb)cb();},230);}
+    function ts(e){sx=e.touches[0].clientX;sy=e.touches[0].clientY;drag=false;cur=0;inner.style.transition='none';}
+    function tm(e){const dx=e.touches[0].clientX-sx,dy=e.touches[0].clientY-sy;if(!drag){if(Math.abs(dx)>Math.abs(dy)&&Math.abs(dx)>8)drag=true;else if(Math.abs(dy)>8)return;else return;}e.preventDefault();cur=Math.max(-115,Math.min(115,dx));inner.style.transform=`translateX(${cur}px)`;const _r=hr(),_l=hl();if(_r)_r.style.opacity=cur>0?String(Math.min(1,cur/THRESH)):'0';if(_l)_l.style.opacity=cur<0?String(Math.min(1,-cur/THRESH)):'0';}
+    function te(){if(!drag)return;drag=false;if(cur>THRESH)snap(160,onSwipeRight);else if(cur<-THRESH)snap(-160,onSwipeLeft);else snap(0);}
+    wrap.addEventListener('touchstart',ts,{passive:true});wrap.addEventListener('touchmove',tm,{passive:false});wrap.addEventListener('touchend',te,{passive:true});
+    return()=>{wrap.removeEventListener('touchstart',ts);wrap.removeEventListener('touchmove',tm);wrap.removeEventListener('touchend',te);};
+  },[onSwipeRight,onSwipeLeft]);
+  return(
+    <div ref={wrapRef} style={{position:'relative',borderRadius:14,overflow:'hidden'}}>
+      <div className="sh-r" style={{position:'absolute',inset:0,display:'flex',alignItems:'center',padding:'0 22px',background:rightColor+'2A',opacity:0}}><span style={{fontSize:26,fontWeight:800}}>{rightIcon}</span></div>
+      <div className="sh-l" style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'flex-end',padding:'0 22px',background:'#FF5C5C2A',opacity:0}}><span style={{fontSize:22}}>🗑</span></div>
+      <div ref={innerRef} style={{position:'relative',willChange:'transform'}}>{children}</div>
+    </div>
+  );
+}
+
+// ── App ───────────────────────────────────────────────────────────────────────
+
+function App() {
+  const [items,        setItems]        = useState(()=>load(ITEMS_KEY,[]));
+  const [projects,     setProjects]     = useState(()=>load(PROJECTS_KEY,[]));
+  const [tab,          setTab]          = useState('active');
+  const [showForm,     setShowForm]     = useState(false);
+  const [showProjForm, setShowProjForm] = useState(false);
+  const [editItem,     setEditItem]     = useState(null);
+  const [editProj,     setEditProj]     = useState(null);
+  const [defaultType,  setDefaultType]  = useState('reminder');
+  const [filterType,   setFilterType]   = useState('all');
+  const [projFilter,   setProjFilter]   = useState('all');
+  const [settings,     setSettings]     = useState(()=>load(SETTINGS_KEY,{notifHour:9,notifEnabled:false}));
+  const [notifPerm,    setNotifPerm]    = useState(canNotify()?Notification.permission:'unsupported');
+  const [showSettings, setShowSettings] = useState(false);
+  const [searchQuery,  setSearchQuery]  = useState('');
+  const [showSearch,   setShowSearch]   = useState(false);
+  const [toast,        setToast]        = useState(null);
+  const toastTimer=useRef(null), importRef=useRef(null);
+
+  useEffect(()=>{save(ITEMS_KEY,items);},[items]);
+  useEffect(()=>{save(PROJECTS_KEY,projects);},[projects]);
+  useEffect(()=>{save(SETTINGS_KEY,settings);},[settings]);
+
+  const checkNotifications=useCallback(()=>{
+    if(!settings.notifEnabled||Notification.permission!=='granted') return;
+    if(new Date().getHours()<settings.notifHour) return;
+    const log=load(NOTIF_KEY,{}),today=new Date().toISOString().slice(0,10);
+    let updated=false;
+    items.filter(i=>!i.completedAt&&isDueTomorrow(i.dueDate)).forEach(item=>{
+      const key=`${item.id}-${today}`; if(log[key]) return;
+      const rl=recurLabel(item.recurrence);
+      fireNotification(`${TYPE_CONFIG[item.type].icon} ${item.title}`,`Due tomorrow${rl?` · Repeats ${item.recurrence}`:''}  · ${PRIORITY_CONFIG[item.priority].label} priority`);
+      log[key]=true; updated=true;
+    });
+    if(updated) save(NOTIF_KEY,log);
+  },[items,settings]);
+
+  useEffect(()=>{checkNotifications();const t=setInterval(checkNotifications,15*60*1000);return()=>clearInterval(t);},[checkNotifications]);
+
+  function showToast(msg,undoItem=null){if(toastTimer.current)clearTimeout(toastTimer.current);setToast({msg,undoItem});toastTimer.current=setTimeout(()=>setToast(null),undoItem?4500:2500);}
+  function handleUndo(){if(toastTimer.current)clearTimeout(toastTimer.current);if(toast?.undoItem){setItems(prev=>sortByPriorityDate([...prev,toast.undoItem]));showToast('Restored ✓');}else setToast(null);}
+
+  function openAdd(type='reminder'){setDefaultType(type);setEditItem(null);setShowForm(true);setShowSettings(false);setShowSearch(false);}
+  function openEdit(item){setDefaultType(item.type);setEditItem(item);setShowForm(true);}
+
+  function saveItem(data){
+    if(editItem) setItems(prev=>prev.map(i=>i.id===editItem.id?{...i,...data}:i));
+    else setItems(prev=>[...prev,{...data,id:Date.now().toString(),createdAt:new Date().toISOString()}]);
+    showToast(editItem?'Saved ✓':'Added ✓'); setShowForm(false); setEditItem(null);
+  }
+
+  function completeItem(id){
+    const item=items.find(i=>i.id===id); if(!item) return;
+    const completedAt=new Date().toISOString();
+    if(item.recurrence&&item.recurrence!=='none'&&item.dueDate){
+      const next={...item,id:(Date.now()+1).toString(),dueDate:getNextDue(item.dueDate,item.recurrence),createdAt:completedAt,completedAt:null};
+      setItems(prev=>[...prev.map(i=>i.id===id?{...i,completedAt}:i),next]);
+      showToast(`Done! Next ${item.recurrence} entry added`);
+    } else {
+      setItems(prev=>prev.map(i=>i.id===id?{...i,completedAt}:i));
+      showToast('Done ✓');
+    }
+  }
+
+  function completeMultiple(ids){
+    const now=new Date().toISOString(); const newItems=[];
+    setItems(prev=>{
+      const updated=prev.map(i=>{
+        if(!ids.includes(i.id)) return i;
+        if(i.recurrence&&i.recurrence!=='none'&&i.dueDate) newItems.push({...i,id:(Date.now()+Math.random()).toString(),dueDate:getNextDue(i.dueDate,i.recurrence),createdAt:now,completedAt:null});
+        return{...i,completedAt:now};
+      });
+      return[...updated,...newItems];
+    });
+    showToast(`${ids.length} item${ids.length>1?'s':''} done ✓`);
+  }
+
+  function restoreItem(id){setItems(prev=>prev.map(i=>i.id===id?{...i,completedAt:null}:i));showToast('Restored ✓');}
+  function deleteItem(id){const item=items.find(i=>i.id===id);setItems(prev=>prev.filter(i=>i.id!==id));showToast('Deleted',item);}
+
+  // Project CRUD
+  function saveProject(data){
+    if(editProj) setProjects(prev=>prev.map(p=>p.id===editProj.id?{...p,...data,updatedAt:new Date().toISOString()}:p));
+    else setProjects(prev=>[...prev,{...data,id:Date.now().toString(),tasks:[],createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()}]);
+    showToast(editProj?'Project saved ✓':'Project created ✓');
+    setShowProjForm(false); setEditProj(null);
+  }
+  function deleteProject(id){setProjects(prev=>prev.filter(p=>p.id!==id));showToast('Project deleted');}
+  function updateProjectTasks(id,tasks){setProjects(prev=>prev.map(p=>p.id===id?{...p,tasks,updatedAt:new Date().toISOString()}:p));}
+  function updateProjectStatus(id,status){setProjects(prev=>prev.map(p=>p.id===id?{...p,status,updatedAt:new Date().toISOString()}:p));}
+
+  // Export / Import
+  function exportData(){
+    const data={items,projects};
+    const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+    const url=URL.createObjectURL(blob),a=document.createElement('a');
+    a.href=url; a.download=`agenda-backup-${new Date().toISOString().slice(0,10)}.json`; a.click();
+    URL.revokeObjectURL(url); showToast('Backup saved ✓');
+  }
+  function handleImportFile(e){
+    const file=e.target.files?.[0]; if(!file) return;
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      try{
+        const d=JSON.parse(ev.target.result);
+        if(Array.isArray(d)){setItems(d);showToast(`${d.length} items imported ✓`);}
+        else if(d.items&&d.projects){setItems(d.items);setProjects(d.projects);showToast('Backup imported ✓');}
+        else throw 0;
+      }catch{showToast('Invalid backup file');}
+    };
+    reader.readAsText(file); e.target.value='';
+  }
+  async function handleEnableNotifs(){
+    const granted=await requestNotifPermission();
+    setNotifPerm(canNotify()?Notification.permission:'unsupported');
+    if(granted){setSettings(s=>({...s,notifEnabled:true}));showToast('Notifications enabled ✓');}
+    else showToast('Blocked — check Settings › Safari › this site');
+  }
+
+  // Derived
+  const active=items.filter(i=>!i.completedAt);
+  const completed=[...items.filter(i=>i.completedAt)].sort((a,b)=>new Date(b.completedAt)-new Date(a.completedAt));
+  const buyItems=sortByPriorityDate(active.filter(i=>i.type==='buy'));
+
+  function applyFilter(arr){return filterType==='all'?arr:arr.filter(i=>i.type===filterType);}
+  const q=searchQuery.toLowerCase();
+  const searchResults=q?applyFilter(tab==='completed'?completed:active).filter(i=>i.title.toLowerCase().includes(q)||(i.notes||'').toLowerCase().includes(q)):null;
+
+  const nonBuy=arr=>arr.filter(i=>i.type!=='buy');
+  const overdueItems  =applyFilter(nonBuy(active).filter(i=>i.dueDate&&isOverdue(i.dueDate))).sort((a,b)=>new Date(a.dueDate)-new Date(b.dueDate));
+  const todayItems    =sortByPriorityDate(applyFilter(nonBuy(active).filter(i=>isToday(i.dueDate))));
+  const upcomingItems =sortByPriorityDate(applyFilter(nonBuy(active).filter(i=>!i.dueDate||(!isOverdue(i.dueDate)&&!isToday(i.dueDate)))));
+  const completedFiltered=applyFilter(completed);
+
+  const filteredProjects=projFilter==='all'?projects:projects.filter(p=>p.category===projFilter);
+  const activeProjects=filteredProjects.filter(p=>p.status!=='done');
+  const archivedProjects=filteredProjects.filter(p=>p.status==='done');
+
+  function cardActions(item){
+    return item.completedAt
+      ?{onSwipeRight:()=>restoreItem(item.id),onSwipeLeft:()=>deleteItem(item.id),rightIcon:'↩',rightColor:'#6DBF6D'}
+      :{onSwipeRight:()=>completeItem(item.id),onSwipeLeft:()=>deleteItem(item.id),rightIcon:'✓',rightColor:'#6DBF6D'};
+  }
+
+  const TABS=[
+    {id:'active',   label:`Active · ${nonBuy(active).length}`},
+    {id:'shopping', label:`🛒 · ${buyItems.length}`},
+    {id:'projects', label:`Projects · ${projects.filter(p=>p.status!=='done').length}`},
+    {id:'completed',label:`Done · ${completed.length}`},
+  ];
+
+  return(
+    <div style={S.root}>
+      {toast&&(
+        <div style={S.toast}>
+          <span>{toast.msg}</span>
+          {toast.undoItem&&<button style={S.undoBtn} onClick={handleUndo}>UNDO</button>}
+        </div>
+      )}
+
+      <header style={{...S.header,paddingTop:'max(18px, env(safe-area-inset-top))'}}>
+        <div style={S.headerTop}>
+          <span style={S.logo}>AGENDA</span>
+          <div style={{display:'flex',gap:8}}>
+            {tab!=='projects'&&<button style={{...S.iconBtn,color:showSearch?'#F0D060':'#888'}} onClick={()=>{setShowSearch(s=>!s);setSearchQuery('');}}> 🔍</button>}
+            <button style={{...S.iconBtn,color:showSettings?'#F0D060':'#888'}} onClick={()=>setShowSettings(s=>!s)}>⚙</button>
+            <button style={S.addBtn} onClick={()=>{
+              if(tab==='projects'){setEditProj(null);setShowProjForm(true);setShowSettings(false);}
+              else openAdd(tab==='shopping'?'buy':'reminder');
+            }}>+</button>
+          </div>
+        </div>
+
+        {showSearch&&tab!=='projects'&&(
+          <div style={{marginBottom:12}}>
+            <input style={S.searchInput} placeholder="Search items…" autoFocus value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} />
+          </div>
+        )}
+
+        {showSettings&&(
+          <div style={S.settingsPanel}>
+            <p style={S.sectionLabel}>Notifications</p>
+            <div style={S.settingsRow}>
+              <span style={S.settingsLabel}>🔔 Day-before alerts
+                {notifPerm==='unsupported'&&<span style={S.settingsHint}> (not supported)</span>}
+                {notifPerm==='denied'&&<span style={{...S.settingsHint,color:'#FF5C5C'}}> (blocked)</span>}
+              </span>
+              {notifPerm!=='unsupported'&&(settings.notifEnabled&&notifPerm==='granted'
+                ?<button style={S.toggleOn} onClick={()=>setSettings(s=>({...s,notifEnabled:false}))}>ON</button>
+                :<button style={S.toggleOff} onClick={handleEnableNotifs}>OFF</button>)}
+            </div>
+            {settings.notifEnabled&&notifPerm==='granted'&&(
+              <div style={S.settingsRow}>
+                <span style={S.settingsLabel}>Alert time</span>
+                <select style={S.settingsSelect} value={settings.notifHour} onChange={e=>setSettings(s=>({...s,notifHour:Number(e.target.value)}))}>
+                  {[6,7,8,9,10,11,12].map(h=><option key={h} value={h}>{h}:00 {h<12?'am':'pm'}</option>)}
+                </select>
+              </div>
+            )}
+            <div style={{borderTop:'1px solid #2A2A2A',paddingTop:12,marginTop:2}}>
+              <p style={S.sectionLabel}>Data</p>
+              <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+                <button style={S.dataBtn} onClick={exportData}>⬇ Export Backup</button>
+                <button style={S.dataBtn} onClick={()=>importRef.current?.click()}>⬆ Import Backup</button>
+                <input ref={importRef} type="file" accept=".json" style={{display:'none'}} onChange={handleImportFile} />
+              </div>
+              <p style={{...S.settingsHint,marginTop:8}}>Export saves a .json file. Import replaces all current data.</p>
+            </div>
+          </div>
+        )}
+
+        {/* Tabs — scrollable so all four fit */}
+        <div style={{...S.tabs,overflowX:'auto',flexWrap:'nowrap'}}>
+          {TABS.map(t=>(
+            <button key={t.id} style={{...S.tabBtn,...(tab===t.id?S.tabActive:{}),whiteSpace:'nowrap'}}
+              onClick={()=>{setTab(t.id);setShowSettings(false);setSearchQuery('');}}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Filter row */}
+        {(tab==='active'||tab==='completed')&&(
+          <div style={S.filters}>
+            {['all','reminder','appointment'].map(f=>(
+              <button key={f} style={{...S.filterBtn,...(filterType===f?S.filterActive:{})}} onClick={()=>setFilterType(f)}>
+                {f==='all'?'All':TYPE_CONFIG[f]?`${TYPE_CONFIG[f].icon} ${TYPE_CONFIG[f].label}`:f}
+              </button>
+            ))}
+          </div>
+        )}
+        {tab==='projects'&&(
+          <div style={S.filters}>
+            {['all',...Object.keys(PROJECT_CATEGORIES)].map(f=>(
+              <button key={f} style={{...S.filterBtn,...(projFilter===f?{...S.filterActive,borderColor:(PROJECT_CATEGORIES[f]?.color||'#F0D060')+'66',color:PROJECT_CATEGORIES[f]?.color||'#F0D060'}:{})}} onClick={()=>setProjFilter(f)}>
+                {f==='all'?'All':`${PROJECT_CATEGORIES[f].icon} ${PROJECT_CATEGORIES[f].label}`}
+              </button>
+            ))}
+          </div>
+        )}
+      </header>
+
+      <main style={{...S.main,paddingBottom:'max(80px, calc(60px + env(safe-area-inset-bottom)))'}}>
+
+        {/* Search */}
+        {searchQuery&&(
+          searchResults.length===0
+            ?<div style={S.empty}>No results for "{searchQuery}"</div>
+            :searchResults.map(item=>(
+              <SwipeCard key={item.id} {...cardActions(item)}>
+                <ItemCard item={item} onComplete={()=>completeItem(item.id)} onRestore={()=>restoreItem(item.id)} onEdit={()=>openEdit(item)} onDelete={()=>deleteItem(item.id)} />
+              </SwipeCard>
+            ))
+        )}
+
+        {/* Active */}
+        {!searchQuery&&tab==='active'&&(
+          <>
+            {overdueItems.length>0&&<><SectionHeader label="OVERDUE" color="#FF5C5C" count={overdueItems.length} />
+              {overdueItems.map(item=><SwipeCard key={item.id} {...cardActions(item)}><ItemCard item={item} onComplete={()=>completeItem(item.id)} onRestore={()=>restoreItem(item.id)} onEdit={()=>openEdit(item)} onDelete={()=>deleteItem(item.id)} /></SwipeCard>)}</>}
+            {todayItems.length>0&&<><SectionHeader label="TODAY" color="#F0D060" count={todayItems.length} />
+              {todayItems.map(item=><SwipeCard key={item.id} {...cardActions(item)}><ItemCard item={item} onComplete={()=>completeItem(item.id)} onRestore={()=>restoreItem(item.id)} onEdit={()=>openEdit(item)} onDelete={()=>deleteItem(item.id)} /></SwipeCard>)}</>}
+            {upcomingItems.length>0&&<>
+              {(overdueItems.length>0||todayItems.length>0)&&<SectionHeader label="UPCOMING" color="#666" count={upcomingItems.length} />}
+              {upcomingItems.map(item=><SwipeCard key={item.id} {...cardActions(item)}><ItemCard item={item} onComplete={()=>completeItem(item.id)} onRestore={()=>restoreItem(item.id)} onEdit={()=>openEdit(item)} onDelete={()=>deleteItem(item.id)} /></SwipeCard>)}</>}
+            {nonBuy(active).length===0&&<div style={S.empty}>{'Nothing here yet.\nTap + to add something.'}</div>}
+            {nonBuy(active).length>0&&<p style={S.hint}>Swipe right to complete · swipe left to delete</p>}
+          </>
+        )}
+
+        {/* Shopping */}
+        {!searchQuery&&tab==='shopping'&&(
+          <ShoppingList items={buyItems} onCompleteMultiple={completeMultiple} onDelete={deleteItem} onEdit={openEdit} />
+        )}
+
+        {/* Projects */}
+        {!searchQuery&&tab==='projects'&&(
+          <ProjectsView
+            active={activeProjects}
+            archived={archivedProjects}
+            onEdit={p=>{setEditProj(p);setShowProjForm(true);}}
+            onDelete={deleteProject}
+            onUpdateTasks={updateProjectTasks}
+            onUpdateStatus={updateProjectStatus}
+          />
+        )}
+
+        {/* Done */}
+        {!searchQuery&&tab==='completed'&&(
+          completedFiltered.length===0
+            ?<div style={S.empty}>{completed.length===0?'Nothing completed yet.':`No ${filterType}s completed yet.`}</div>
+            :<>{completedFiltered.map(item=>(
+              <SwipeCard key={item.id} {...cardActions(item)}>
+                <ItemCard item={item} onComplete={()=>completeItem(item.id)} onRestore={()=>restoreItem(item.id)} onEdit={()=>openEdit(item)} onDelete={()=>deleteItem(item.id)} />
+              </SwipeCard>
+            ))}<p style={S.hint}>Swipe right to restore · swipe left to delete</p></>
+        )}
+      </main>
+
+      {showForm&&<ItemForm initial={editItem} defaultType={defaultType} onSave={saveItem} onClose={()=>{setShowForm(false);setEditItem(null);}} />}
+      {showProjForm&&<ProjectForm initial={editProj} onSave={saveProject} onClose={()=>{setShowProjForm(false);setEditProj(null);}} />}
+    </div>
+  );
+}
+
+// ── Projects View ─────────────────────────────────────────────────────────────
+
+function ProjectsView({active,archived,onEdit,onDelete,onUpdateTasks,onUpdateStatus}) {
+  const [showArchived,setShowArchived]=useState(false);
+
+  if(active.length===0&&archived.length===0){
+    return <div style={S.empty}>{'No projects yet.\nTap + to create one.'}</div>;
+  }
+
+  return(
+    <div style={{display:'flex',flexDirection:'column',gap:10}}>
+      {active.map(p=><ProjectCard key={p.id} project={p} onEdit={()=>onEdit(p)} onDelete={()=>onDelete(p.id)} onUpdateTasks={tasks=>onUpdateTasks(p.id,tasks)} onUpdateStatus={status=>onUpdateStatus(p.id,status)} />)}
+
+      {archived.length>0&&(
+        <>
+          <button style={S.archivedToggle} onClick={()=>setShowArchived(s=>!s)}>
+            {showArchived?'▲':'▼'} Archived · {archived.length}
+          </button>
+          {showArchived&&archived.map(p=><ProjectCard key={p.id} project={p} onEdit={()=>onEdit(p)} onDelete={()=>onDelete(p.id)} onUpdateTasks={tasks=>onUpdateTasks(p.id,tasks)} onUpdateStatus={status=>onUpdateStatus(p.id,status)} />)}
+        </>
+      )}
+    </div>
+  );
+}
+
+function ProjectCard({project,onEdit,onDelete,onUpdateTasks,onUpdateStatus}) {
+  const [expanded,setExpanded]=useState(false);
+  const [newTask,  setNewTask]=useState('');
+  const taskInputRef=useRef(null);
+
+  const cat    = PROJECT_CATEGORIES[project.category]||PROJECT_CATEGORIES.general;
+  const status = PROJECT_STATUSES[project.status]||PROJECT_STATUSES.active;
+  const tasks  = project.tasks||[];
+  const done   = tasks.filter(t=>t.done).length;
+  const pct    = tasks.length>0?Math.round((done/tasks.length)*100):0;
+  const archived = project.status==='done';
+
+  function toggleTask(id){
+    onUpdateTasks(tasks.map(t=>t.id===id?{...t,done:!t.done}:t));
+  }
+  function addTask(){
+    if(!newTask.trim()) return;
+    onUpdateTasks([...tasks,{id:Date.now().toString(),text:newTask.trim(),done:false}]);
+    setNewTask('');
+    taskInputRef.current?.focus();
+  }
+  function deleteTask(id){onUpdateTasks(tasks.filter(t=>t.id!==id));}
+
+  return(
+    <div style={{...S.projCard,opacity:archived?0.6:1}}>
+      {/* Category stripe */}
+      <div style={{...S.cardStripe,background:archived?'#2E2E2E':cat.color}} />
+      <div style={{flex:1,minWidth:0}}>
+
+        {/* Header row */}
+        <div style={{display:'flex',alignItems:'flex-start',gap:10,paddingRight:14,cursor:'pointer'}} onClick={()=>setExpanded(e=>!e)}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6,flexWrap:'wrap'}}>
+              <span style={{fontSize:19,fontWeight:800,color:archived?'#555':'#F5F0E8',wordBreak:'break-word'}}>{project.name}</span>
+            </div>
+            <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+              <span style={{fontSize:12,fontWeight:700,color:archived?'#444':cat.color,background:archived?'#222':cat.bg,borderRadius:6,padding:'3px 9px'}}>
+                {cat.icon} {cat.label}
+              </span>
+              <span style={{fontSize:12,fontWeight:700,color:status.color,background:status.color+'18',borderRadius:6,padding:'3px 9px'}}>
+                {status.label}
+              </span>
+              {tasks.length>0&&(
+                <span style={{fontSize:12,color:'#666',fontWeight:600}}>{done}/{tasks.length} tasks</span>
+              )}
+            </div>
+          </div>
+          <span style={{color:'#444',fontSize:13,flexShrink:0,marginTop:4}}>{expanded?'▲':'▼'}</span>
+        </div>
+
+        {/* Progress bar */}
+        {tasks.length>0&&(
+          <div style={{height:4,background:'#252525',borderRadius:2,margin:'12px 14px 0 0',overflow:'hidden'}}>
+            <div style={{height:'100%',width:`${pct}%`,background:pct===100?'#6DBF6D':cat.color,borderRadius:2,transition:'width 0.3s'}} />
+          </div>
+        )}
+
+        {/* Expanded */}
+        {expanded&&(
+          <div style={{marginTop:14,borderTop:'1px solid #242424',paddingTop:14,paddingRight:14}}>
+            {/* Description */}
+            {project.description&&(
+              <p style={{fontSize:15,color:'#9A9080',lineHeight:1.6,marginBottom:14,fontWeight:500}}>{project.description}</p>
+            )}
+
+            {/* Tasks */}
+            {tasks.length>0&&(
+              <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:12}}>
+                {tasks.map(task=>(
+                  <div key={task.id} style={{display:'flex',alignItems:'center',gap:10}}>
+                    <div style={{...S.checkbox,width:26,height:26,flexShrink:0,background:task.done?'#6DBF6D':'transparent',borderColor:task.done?'#6DBF6D':'#3A3A3A'}} onClick={()=>toggleTask(task.id)}>
+                      {task.done&&<span style={{color:'#141414',fontSize:13,fontWeight:900}}>✓</span>}
+                    </div>
+                    <span style={{flex:1,fontSize:16,fontWeight:600,color:task.done?'#444':'#DDD',textDecoration:task.done?'line-through':'none',wordBreak:'break-word'}}>{task.text}</span>
+                    <button style={{background:'transparent',border:'none',color:'#333',fontSize:16,cursor:'pointer',padding:'2px 6px',flexShrink:0}} onClick={()=>deleteTask(task.id)}>✕</button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Add task input */}
+            {!archived&&(
+              <div style={{display:'flex',gap:8,marginBottom:14}}>
+                <input ref={taskInputRef} style={{...S.input,flex:1,padding:'10px 14px',fontSize:15}}
+                  placeholder="Add a task…" value={newTask}
+                  onChange={e=>setNewTask(e.target.value)}
+                  onKeyDown={e=>{if(e.key==='Enter')addTask();}} />
+                <button style={{...S.actionBtn,padding:'10px 16px',fontSize:18,flexShrink:0}} onClick={addTask}>+</button>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+              {!archived&&<button style={S.actionBtn} onClick={onEdit}>Edit Project</button>}
+              {project.status==='active'&&<button style={{...S.actionBtn,color:'#FF9E4A',borderColor:'#FF9E4A33'}} onClick={()=>onUpdateStatus('hold')}>Pause</button>}
+              {project.status==='hold'  &&<button style={{...S.actionBtn,color:'#6DBF6D',borderColor:'#6DBF6D33'}} onClick={()=>onUpdateStatus('active')}>Resume</button>}
+              {project.status!=='done'  &&<button style={{...S.actionBtn,color:'#888',  borderColor:'#33333388'}}  onClick={()=>onUpdateStatus('done')}>Archive</button>}
+              {project.status==='done'  &&<button style={{...S.actionBtn,color:'#6DBF6D',borderColor:'#6DBF6D33'}} onClick={()=>onUpdateStatus('active')}>Restore</button>}
+              <button style={{...S.actionBtn,...S.deleteBtn}} onClick={onDelete}>Delete</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Project Form ──────────────────────────────────────────────────────────────
+
+function ProjectForm({initial,onSave,onClose}) {
+  const [name,       setName]       = useState(initial?.name        ||'');
+  const [category,   setCategory]   = useState(initial?.category    ||'general');
+  const [status,     setStatus]     = useState(initial?.status      ||'active');
+  const [description,setDescription]= useState(initial?.description ||'');
+
+  function handleSave(){if(!name.trim()) return; onSave({name:name.trim(),category,status,description:description.trim()});}
+
+  return(
+    <div style={S.overlay} onClick={onClose}>
+      <div style={{...S.modal,paddingBottom:'max(36px,calc(24px + env(safe-area-inset-bottom)))'}} onClick={e=>e.stopPropagation()}>
+        <div style={S.modalHeader}>
+          <span style={S.modalTitle}>{initial?'Edit Project':'New Project'}</span>
+          <button style={S.closeBtn} onClick={onClose}>✕</button>
+        </div>
+
+        <label style={S.label}>Project name</label>
+        <input style={S.input} placeholder="Name your project…" value={name} onChange={e=>setName(e.target.value)} autoFocus />
+
+        <label style={S.label}>Category</label>
+        <div style={S.segGroup}>
+          {Object.entries(PROJECT_CATEGORIES).map(([k,v])=>(
+            <button key={k} style={{...S.segBtn,...(category===k?{background:v.bg,borderColor:v.color,color:v.color}:{})}} onClick={()=>setCategory(k)}>
+              {v.icon} {v.label}
+            </button>
+          ))}
+        </div>
+
+        <label style={S.label}>Status</label>
+        <div style={S.segGroup}>
+          {Object.entries(PROJECT_STATUSES).map(([k,v])=>(
+            <button key={k} style={{...S.segBtn,...(status===k?{background:v.color+'22',borderColor:v.color,color:v.color}:{})}} onClick={()=>setStatus(k)}>
+              {v.label}
+            </button>
+          ))}
+        </div>
+
+        <label style={S.label}>Description / Notes (optional)</label>
+        <textarea style={{...S.input,height:100,resize:'none'}} placeholder="What's this project about?" value={description} onChange={e=>setDescription(e.target.value)} />
+
+        <button style={S.saveBtn} onClick={handleSave}>{initial?'Save Changes':'Create Project'}</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Shopping List ─────────────────────────────────────────────────────────────
+
+function ShoppingList({items,onCompleteMultiple,onDelete,onEdit}) {
+  const [checked,setChecked]=useState(new Set());
+  function toggle(id){setChecked(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);return n;});}
+  function clearChecked(){onCompleteMultiple([...checked]);setChecked(new Set());}
+  const pending=items.filter(i=>!checked.has(i.id));
+  const inBasket=items.filter(i=>checked.has(i.id));
+  if(items.length===0) return <div style={{...S.empty,marginTop:80}}>{'Your shopping list is empty.\nTap + to add items.'}</div>;
+  return(
+    <div style={{display:'flex',flexDirection:'column',gap:6}}>
+      {pending.map(item=>(
+        <SwipeCard key={item.id} onSwipeRight={()=>toggle(item.id)} onSwipeLeft={()=>onDelete(item.id)} rightIcon="✓" rightColor="#6DBF6D">
+          <ShopRow item={item} checked={false} onToggle={()=>toggle(item.id)} onEdit={()=>onEdit(item)} />
+        </SwipeCard>
+      ))}
+      {inBasket.length>0&&(
+        <>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'14px 4px 6px'}}>
+            <span style={{fontSize:12,fontWeight:800,letterSpacing:1.5,color:'#555',textTransform:'uppercase'}}>In basket · {inBasket.length}</span>
+            <button style={S.doneShoppingBtn} onClick={clearChecked}>Done Shopping ✓</button>
+          </div>
+          {inBasket.map(item=>(
+            <SwipeCard key={item.id} onSwipeRight={()=>toggle(item.id)} onSwipeLeft={()=>onDelete(item.id)} rightIcon="↩" rightColor="#888">
+              <ShopRow item={item} checked={true} onToggle={()=>toggle(item.id)} onEdit={()=>onEdit(item)} />
+            </SwipeCard>
+          ))}
+        </>
+      )}
+      <p style={{...S.hint,marginTop:6}}>Tap to add to basket · swipe left to delete</p>
+    </div>
+  );
+}
+
+function ShopRow({item,checked,onToggle,onEdit}) {
+  const pc=PRIORITY_CONFIG[item.priority], rl=recurLabel(item.recurrence);
+  const overdue=!checked&&isOverdue(item.dueDate), todayDue=!checked&&isToday(item.dueDate);
+  return(
+    <div style={{...S.shopRow,opacity:checked?0.42:1}} onClick={onToggle}>
+      <div style={{...S.checkbox,background:checked?'#6DBF6D':'transparent',borderColor:checked?'#6DBF6D':'#3A3A3A'}}>
+        {checked&&<span style={{color:'#141414',fontSize:15,fontWeight:900,lineHeight:1}}>✓</span>}
+      </div>
+      <div style={{flex:1,minWidth:0}}>
+        <span style={{display:'block',fontSize:18,fontWeight:700,color:checked?'#4A4A4A':'#F5F0E8',textDecoration:checked?'line-through':'none',wordBreak:'break-word',lineHeight:1.3}}>{item.title}</span>
+        {(rl||item.dueDate||item.notes)&&(
+          <div style={{display:'flex',gap:8,marginTop:5,flexWrap:'wrap',alignItems:'center'}}>
+            {rl&&<span style={S.recurChip}>↻ {rl}</span>}
+            {item.dueDate&&<span style={{fontSize:13,fontWeight:600,color:overdue?'#FF5C5C':todayDue?'#F0D060':'#666'}}>{overdue?'⚠ ':''}{formatDate(item.dueDate)}</span>}
+            {item.notes&&<span style={{fontSize:13,color:'#555',fontStyle:'italic',overflow:'hidden',whiteSpace:'nowrap',textOverflow:'ellipsis',maxWidth:160}}>{item.notes}</span>}
+          </div>
+        )}
+      </div>
+      <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:8,flexShrink:0}}>
+        <div style={{width:9,height:9,borderRadius:'50%',background:checked?'#2A2A2A':pc.color}} />
+        <button style={S.shopEditBtn} onClick={e=>{e.stopPropagation();onEdit();}}>···</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Section Header ────────────────────────────────────────────────────────────
+
+function SectionHeader({label,color,count}) {
+  return(
+    <div style={{display:'flex',alignItems:'center',gap:10,padding:'4px 2px'}}>
+      <div style={{width:3,height:16,borderRadius:2,background:color,flexShrink:0}} />
+      <span style={{fontSize:11,fontWeight:800,letterSpacing:2,color,textTransform:'uppercase'}}>{label}</span>
+      <span style={{fontSize:11,fontWeight:700,color:color+'88',background:color+'18',borderRadius:10,padding:'1px 7px'}}>{count}</span>
+    </div>
+  );
+}
+
+// ── Item Card ─────────────────────────────────────────────────────────────────
+
+function ItemCard({item,onComplete,onRestore,onEdit,onDelete}) {
+  const [expanded,setExpanded]=useState(false);
+  const pc=PRIORITY_CONFIG[item.priority],tc=TYPE_CONFIG[item.type];
+  const overdue=!item.completedAt&&isOverdue(item.dueDate);
+  const tmrw=!item.completedAt&&isDueTomorrow(item.dueDate);
+  const todayDue=!item.completedAt&&isToday(item.dueDate);
+  const dateLabel=item.completedAt?`Done ${formatDate(item.completedAt)}`:formatDate(item.dueDate);
+  const rl=recurLabel(item.recurrence);
+  return(
+    <div style={{...S.card,opacity:item.completedAt?0.5:1}}>
+      <div style={{...S.cardStripe,background:item.completedAt?'#2E2E2E':pc.color}} />
+      <div style={{flex:1,minWidth:0}}>
+        <div style={S.cardMain} onClick={()=>setExpanded(e=>!e)}>
+          <div style={S.cardLeft}>
+            <span style={S.typeBadge}>{tc.icon}</span>
+            <div style={S.cardContent}>
+              <span style={{...S.cardTitle,textDecoration:item.completedAt?'line-through':'none',color:item.completedAt?'#4A4A4A':'#F5F0E8'}}>{item.title}</span>
+              <div style={S.cardMeta}>
+                <span style={{...S.priorityChip,color:item.completedAt?'#4A4A4A':pc.color,background:item.completedAt?'#222':pc.bg}}>{pc.label}</span>
+                {rl&&<span style={S.recurChip}>↻ {rl}</span>}
+                {dateLabel&&<span style={{...S.dateLabel,color:overdue?'#FF5C5C':(tmrw||todayDue)?'#F0D060':'#777',fontWeight:(overdue||tmrw||todayDue)?700:500}}>{overdue?'⚠ ':tmrw?'⏰ ':''}{dateLabel}</span>}
+              </div>
+            </div>
+          </div>
+          <span style={S.chevron}>{expanded?'▲':'▼'}</span>
+        </div>
+        {expanded&&(
+          <div style={S.cardExpanded}>
+            {item.notes&&<p style={S.notes}>{item.notes}</p>}
+            {rl&&<p style={S.recurNote}>↻ Repeats {item.recurrence} — completing schedules the next one</p>}
+            <div style={S.actions}>
+              {!item.completedAt
+                ?<><button style={S.actionBtn} onClick={onComplete}>✓ Done</button><button style={S.actionBtn} onClick={onEdit}>Edit</button><button style={{...S.actionBtn,...S.deleteBtn}} onClick={onDelete}>Delete</button></>
+                :<><button style={S.actionBtn} onClick={onRestore}>↩ Restore</button><button style={{...S.actionBtn,...S.deleteBtn}} onClick={onDelete}>Delete</button></>}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Item Form ─────────────────────────────────────────────────────────────────
+
+function ItemForm({initial,defaultType,onSave,onClose}) {
+  const [title,      setTitle]      = useState(initial?.title      ||'');
+  const [type,       setType]       = useState(initial?.type       ||defaultType||'reminder');
+  const [priority,   setPriority]   = useState(initial?.priority   ||'medium');
+  const [dueDate,    setDueDate]    = useState(initial?.dueDate    ||'');
+  const [recurrence, setRecurrence] = useState(initial?.recurrence ||'none');
+  const [notes,      setNotes]      = useState(initial?.notes      ||'');
+  function handleSave(){if(!title.trim()) return; onSave({title:title.trim(),type,priority,dueDate:dueDate||null,recurrence,notes:notes.trim()});}
+  return(
+    <div style={S.overlay} onClick={onClose}>
+      <div style={{...S.modal,paddingBottom:'max(36px,calc(24px + env(safe-area-inset-bottom)))'}} onClick={e=>e.stopPropagation()}>
+        <div style={S.modalHeader}>
+          <span style={S.modalTitle}>{initial?'Edit Item':'New Item'}</span>
+          <button style={S.closeBtn} onClick={onClose}>✕</button>
+        </div>
+        <label style={S.label}>What is it?</label>
+        <input style={S.input} placeholder="Enter title…" value={title} onChange={e=>setTitle(e.target.value)} autoFocus />
+        <label style={S.label}>Type</label>
+        <div style={S.segGroup}>
+          {Object.entries(TYPE_CONFIG).map(([k,v])=>(
+            <button key={k} style={{...S.segBtn,...(type===k?S.segActive:{})}} onClick={()=>setType(k)}>{v.icon} {v.label}</button>
+          ))}
+        </div>
+        <label style={S.label}>Priority</label>
+        <div style={S.segGroup}>
+          {Object.entries(PRIORITY_CONFIG).map(([k,v])=>(
+            <button key={k} style={{...S.segBtn,...(priority===k?{background:v.bg,borderColor:v.color,color:v.color}:{})}} onClick={()=>setPriority(k)}>{v.label}</button>
+          ))}
+        </div>
+        <label style={S.label}>{type==='appointment'?'Date & Time':'Due Date'} (optional)</label>
+        <input style={S.input} type={type==='appointment'?'datetime-local':'date'} value={dueDate} onChange={e=>setDueDate(e.target.value)} />
+        <label style={S.label}>Repeats</label>
+        <div style={S.segGroup}>
+          {Object.entries(RECUR_CONFIG).map(([k,v])=>(
+            <button key={k} style={{...S.segBtn,...(recurrence===k?S.segActive:{})}} onClick={()=>setRecurrence(k)}>{k!=='none'?'↻ ':''}{v}</button>
+          ))}
+        </div>
+        {recurrence!=='none'&&!dueDate&&<p style={{fontSize:13,color:'#FF9E4A',marginTop:4,fontWeight:600}}>⚠ Set a due date so the next occurrence can be calculated</p>}
+        <label style={S.label}>Notes (optional)</label>
+        <textarea style={{...S.input,height:80,resize:'none'}} placeholder="Any extra detail…" value={notes} onChange={e=>setNotes(e.target.value)} />
+        <button style={S.saveBtn} onClick={handleSave}>{initial?'Save Changes':'Add to List'}</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Styles ────────────────────────────────────────────────────────────────────
+
+const S = {
+  root:            { background:'#141414',minHeight:'100vh',display:'flex',flexDirection:'column',maxWidth:480,margin:'0 auto' },
+  toast:           { position:'fixed',bottom:28,left:'50%',transform:'translateX(-50%)',background:'#242424',color:'#F0D060',borderRadius:12,padding:'11px 18px',fontSize:14,fontWeight:700,zIndex:300,display:'flex',alignItems:'center',gap:14,boxShadow:'0 6px 28px rgba(0,0,0,0.6)',whiteSpace:'nowrap' },
+  undoBtn:         { background:'#F0D06022',border:'2px solid #F0D060',color:'#F0D060',borderRadius:7,padding:'4px 12px',fontSize:12,fontWeight:800,cursor:'pointer' },
+  header:          { background:'#1C1C1C',borderBottom:'2px solid #242424',position:'sticky',top:0,zIndex:10,padding:'18px 16px 0' },
+  headerTop:       { display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14 },
+  logo:            { fontSize:22,fontWeight:800,color:'#F5F0E8',letterSpacing:2 },
+  addBtn:          { background:'#F0D060',color:'#141414',border:'none',borderRadius:'50%',width:46,height:46,fontSize:28,cursor:'pointer',fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center' },
+  iconBtn:         { background:'#242424',border:'none',borderRadius:'50%',width:44,height:44,fontSize:18,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center' },
+  searchInput:     { background:'#242424',border:'2px solid #333',borderRadius:12,color:'#F5F0E8',padding:'12px 16px',fontSize:16,fontWeight:600,width:'100%',outline:'none' },
+  settingsPanel:   { background:'#181818',border:'1px solid #242424',borderRadius:14,padding:'14px 16px',marginBottom:14,display:'flex',flexDirection:'column',gap:12 },
+  sectionLabel:    { fontSize:10,letterSpacing:2,color:'#555',textTransform:'uppercase',fontWeight:700,marginBottom:2 },
+  settingsRow:     { display:'flex',justifyContent:'space-between',alignItems:'center',gap:12 },
+  settingsLabel:   { fontSize:15,fontWeight:600,color:'#CCC',flex:1 },
+  settingsHint:    { fontSize:12,color:'#555',margin:0,lineHeight:1.6,fontStyle:'italic' },
+  toggleOn:        { background:'#F0D06033',border:'2px solid #F0D060',color:'#F0D060',borderRadius:8,padding:'6px 16px',fontSize:13,fontWeight:800,cursor:'pointer' },
+  toggleOff:       { background:'#2A2A2A',border:'2px solid #444',color:'#666',borderRadius:8,padding:'6px 16px',fontSize:13,fontWeight:800,cursor:'pointer' },
+  settingsSelect:  { background:'#2A2A2A',border:'2px solid #444',color:'#F5F0E8',borderRadius:8,padding:'6px 10px',fontSize:14,fontWeight:600,cursor:'pointer' },
+  dataBtn:         { background:'#242424',border:'2px solid #333',color:'#C0B89A',borderRadius:9,padding:'9px 16px',fontSize:14,fontWeight:700,cursor:'pointer',flex:1 },
+  tabs:            { display:'flex',gap:0,marginBottom:12 },
+  tabBtn:          { flex:1,background:'transparent',border:'none',color:'#555',fontSize:13,fontWeight:600,padding:'10px 6px',cursor:'pointer',borderBottom:'3px solid transparent',textAlign:'center' },
+  tabActive:       { color:'#F0D060',borderBottom:'3px solid #F0D060' },
+  filters:         { display:'flex',gap:8,paddingBottom:14,overflowX:'auto' },
+  filterBtn:       { background:'transparent',border:'2px solid #242424',color:'#666',borderRadius:24,padding:'6px 14px',fontSize:13,fontWeight:600,cursor:'pointer',whiteSpace:'nowrap' },
+  filterActive:    { background:'#242424',color:'#F0D060',borderColor:'#F0D06055' },
+  main:            { flex:1,padding:'12px 14px',display:'flex',flexDirection:'column',gap:8 },
+  empty:           { color:'#444',textAlign:'center',marginTop:60,fontSize:16,lineHeight:2,whiteSpace:'pre-line',fontWeight:500 },
+  hint:            { textAlign:'center',color:'#2E2E2E',fontSize:12,marginTop:4,fontStyle:'italic' },
+  // Projects
+  projCard:        { background:'#1C1C1C',borderRadius:14,padding:'16px 0 16px 0',display:'flex',overflow:'hidden' },
+  archivedToggle:  { background:'transparent',border:'1px solid #2A2A2A',color:'#555',borderRadius:10,padding:'10px 16px',fontSize:13,fontWeight:700,cursor:'pointer',textAlign:'left' },
+  // Shopping
+  shopRow:         { background:'#1C1C1C',borderRadius:14,padding:'15px 16px',display:'flex',alignItems:'center',gap:14,cursor:'pointer' },
+  checkbox:        { width:30,height:30,borderRadius:'50%',border:'2.5px solid #3A3A3A',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center' },
+  doneShoppingBtn: { background:'#6DBF6D22',border:'2px solid #6DBF6D',color:'#6DBF6D',borderRadius:9,padding:'8px 16px',fontSize:13,fontWeight:800,cursor:'pointer',whiteSpace:'nowrap' },
+  shopEditBtn:     { background:'transparent',border:'none',color:'#444',fontSize:18,cursor:'pointer',lineHeight:1,padding:'2px 4px',letterSpacing:2 },
+  // Cards
+  card:            { background:'#1C1C1C',borderRadius:14,padding:'15px 14px 15px 0',display:'flex',overflow:'hidden' },
+  cardStripe:      { width:5,borderRadius:'14px 0 0 14px',flexShrink:0,marginRight:14 },
+  cardMain:        { flex:1,display:'flex',alignItems:'center',gap:10,paddingRight:12,minWidth:0,cursor:'pointer' },
+  cardLeft:        { flex:1,display:'flex',gap:12,alignItems:'flex-start',minWidth:0 },
+  typeBadge:       { fontSize:22,lineHeight:1,marginTop:2,flexShrink:0 },
+  cardContent:     { flex:1,minWidth:0 },
+  cardTitle:       { display:'block',fontSize:18,fontWeight:700,lineHeight:1.3,marginBottom:5,wordBreak:'break-word' },
+  cardMeta:        { display:'flex',gap:7,flexWrap:'wrap',alignItems:'center' },
+  priorityChip:    { fontSize:11,fontWeight:700,borderRadius:6,padding:'3px 8px',textTransform:'uppercase',letterSpacing:0.5 },
+  recurChip:       { fontSize:11,fontWeight:700,color:'#777',background:'#252525',borderRadius:6,padding:'3px 8px' },
+  dateLabel:       { fontSize:13,color:'#777' },
+  chevron:         { color:'#444',fontSize:13,flexShrink:0 },
+  cardExpanded:    { marginTop:13,borderTop:'1px solid #242424',paddingTop:13 },
+  notes:           { fontSize:15,color:'#9A9080',lineHeight:1.6,margin:'0 0 10px',fontWeight:500 },
+  recurNote:       { fontSize:13,color:'#666',margin:'0 0 12px',fontStyle:'italic' },
+  actions:         { display:'flex',gap:8,flexWrap:'wrap' },
+  actionBtn:       { background:'#222',border:'2px solid #2E2E2E',color:'#F0D060',borderRadius:10,padding:'10px 16px',fontSize:15,fontWeight:700,cursor:'pointer' },
+  deleteBtn:       { color:'#FF5C5C',borderColor:'#FF5C5C33' },
+  overlay:         { position:'fixed',inset:0,background:'rgba(0,0,0,0.85)',zIndex:100,display:'flex',alignItems:'flex-end',justifyContent:'center' },
+  modal:           { background:'#1C1C1C',borderRadius:'24px 24px 0 0',padding:'24px 18px 36px',width:'100%',maxWidth:480,maxHeight:'92vh',overflowY:'auto',display:'flex',flexDirection:'column',gap:6 },
+  modalHeader:     { display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12 },
+  modalTitle:      { fontSize:20,fontWeight:800,color:'#F5F0E8' },
+  closeBtn:        { background:'#2A2A2A',border:'none',color:'#777',fontSize:18,cursor:'pointer',padding:'6px 12px',borderRadius:8,lineHeight:1 },
+  label:           { fontSize:12,fontWeight:700,color:'#666',textTransform:'uppercase',letterSpacing:1.2,marginBottom:5,marginTop:14,display:'block' },
+  input:           { background:'#222',border:'2px solid #2E2E2E',borderRadius:12,color:'#F5F0E8',padding:'14px 16px',fontSize:17,fontWeight:600,width:'100%',outline:'none' },
+  segGroup:        { display:'flex',gap:8,flexWrap:'wrap' },
+  segBtn:          { background:'#222',border:'2px solid #2E2E2E',color:'#666',borderRadius:10,padding:'10px 15px',fontSize:15,fontWeight:600,cursor:'pointer' },
+  segActive:       { background:'#F0D06018',borderColor:'#F0D060',color:'#F0D060' },
+  saveBtn:         { background:'#F0D060',border:'none',borderRadius:14,color:'#141414',padding:'16px',fontSize:17,fontWeight:800,cursor:'pointer',marginTop:18,letterSpacing:0.5 },
+};
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js', {scope:'./'})
+        .then(r=>console.log('SW ready:',r.scope)).catch(e=>console.warn('SW failed:',e));
+    });
+  }
+</script>
+</body>
+</html>
