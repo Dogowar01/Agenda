@@ -1,0 +1,1992 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="Agenda"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <meta name="theme-color" content="#141414"/>
+  <title>Agenda</title>
+  <link rel="manifest" href="./manifest.json"/>
+  <link rel="apple-touch-icon" href="./icon-192.png"/>
+  <link rel="apple-touch-icon" sizes="192x192" href="./icon-192.png"/>
+  <link rel="apple-touch-icon" sizes="512x512" href="./icon-512.png"/>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+    html,body,#root{height:100%}
+    body{font-family:'Outfit','Helvetica Neue',Arial,sans-serif;color:#F5F0E8;background:#141414;overscroll-behavior:none;-webkit-font-smoothing:antialiased}
+    input,textarea,select,button{font-family:inherit}
+    input[type="date"],input[type="datetime-local"]{color-scheme:dark}
+    button:active{opacity:.72;transform:scale(.97)}
+    ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#333;border-radius:2px}
+    ::placeholder{color:#555}
+    select option{background:#1C1C1C}
+    .sh-r,.sh-l{pointer-events:none}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script type="text/babel">
+const {useState,useEffect,useCallback,useRef} = React;
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const PRIORITY_ORDER = {critical:0,high:1,medium:2,low:3};
+const PRIORITY_CONFIG = {
+  critical:{label:'Critical',color:'#FF5C5C',bg:'#FF5C5C22'},
+  high:    {label:'High',    color:'#FF9E4A',bg:'#FF9E4A22'},
+  medium:  {label:'Medium',  color:'#F0D060',bg:'#F0D06022'},
+  low:     {label:'Low',     color:'#6DBF6D',bg:'#6DBF6D22'},
+};
+const TYPE_CONFIG = {
+  reminder:   {label:'Reminder',icon:'🔔'},
+  buy:        {label:'Buy',     icon:'🛒'},
+  appointment:{label:'Appt',   icon:'📅'},
+};
+const RECUR_CONFIG = {
+  none:'None',daily:'Daily',weekly:'Weekly',
+  fortnightly:'Fortnightly',monthly:'Monthly',yearly:'Yearly',
+};
+const PROJECT_CATS = {
+  signal9:{label:'Signal9',color:'#C084FC',bg:'#C084FC18',icon:'◈'},
+  writing:{label:'Writing', color:'#60B8F0',bg:'#60B8F018',icon:'✒'},
+  general:{label:'General', color:'#A0A0A0',bg:'#A0A0A018',icon:'◎'},
+};
+const PROJECT_STATUSES = {
+  active:{label:'Active',  color:'#6DBF6D'},
+  hold:  {label:'On Hold', color:'#FF9E4A'},
+  done:  {label:'Archived',color:'#555'},
+};
+const PAYMENT_METHODS = {
+  business:{label:'Business Card',short:'Business',color:'#60B8F0',bg:'#60B8F018',icon:'💳'},
+  living:  {label:'Living Card',  short:'Living',  color:'#6DBF6D',bg:'#6DBF6D18',icon:'💚'},
+  cash:    {label:'Cash',         short:'Cash',    color:'#F0D060',bg:'#F0D06018',icon:'💵'},
+};
+
+const ITEMS_KEY    = 'agenda-items-v1';
+const PROJECTS_KEY = 'agenda-projects-v1';
+const FUEL_KEY     = 'agenda-fuel-v1';
+const FX_KEY       = 'agenda-fx-v1';
+const WEATHER_KEY  = 'agenda-weather-v1';
+const BOOKS_KEY    = 'agenda-books-v1';
+const NOTIF_KEY    = 'agenda-notif-log-v1';
+const SETTINGS_KEY = 'agenda-settings-v2';
+
+const BOOK_CATS = {
+  litrpg:   { label:'LitRPG',   icon:'⚔️', color:'#C084FC', query:'litrpg OR "progression fantasy" OR "game system fantasy"' },
+  grimdark: { label:'Grimdark', icon:'🗡️', color:'#FF5C5C', query:'grimdark fantasy OR "dark fantasy" novel' },
+  fantasy:  { label:'Fantasy',  icon:'🏰', color:'#60B8F0', query:'epic fantasy novel series' },
+};
+
+const FX_CURRENCIES = {
+  USD: { label:'US Dollar',   symbol:'$',  flag:'🇺🇸', color:'#60B8F0', bg:'#60B8F018' },
+  JPY: { label:'Japanese Yen',symbol:'¥',  flag:'🇯🇵', color:'#FF9E4A', bg:'#FF9E4A18' },
+};
+
+const WMO = {
+  0: {label:'Clear sky',          icon:'☀️'},
+  1: {label:'Mainly clear',       icon:'🌤️'},
+  2: {label:'Partly cloudy',      icon:'⛅️'},
+  3: {label:'Overcast',           icon:'☁️'},
+  45:{label:'Foggy',              icon:'🌫️'},
+  48:{label:'Icy fog',            icon:'🌫️'},
+  51:{label:'Light drizzle',      icon:'🌦️'},
+  53:{label:'Drizzle',            icon:'🌦️'},
+  55:{label:'Heavy drizzle',      icon:'🌧️'},
+  61:{label:'Light rain',         icon:'🌧️'},
+  63:{label:'Rain',               icon:'🌧️'},
+  65:{label:'Heavy rain',         icon:'🌧️'},
+  71:{label:'Light snow',         icon:'🌨️'},
+  73:{label:'Snow',               icon:'❄️'},
+  75:{label:'Heavy snow',         icon:'❄️'},
+  77:{label:'Snow grains',        icon:'🌨️'},
+  80:{label:'Light showers',      icon:'🌦️'},
+  81:{label:'Showers',            icon:'🌧️'},
+  82:{label:'Heavy showers',      icon:'⛈️'},
+  85:{label:'Snow showers',       icon:'🌨️'},
+  86:{label:'Heavy snow showers', icon:'❄️'},
+  95:{label:'Thunderstorm',       icon:'⛈️'},
+  96:{label:'Thunderstorm + hail',icon:'⛈️'},
+  99:{label:'Thunderstorm + hail',icon:'⛈️'},
+};
+
+function wmo(code){return WMO[code]||{label:'Unknown',icon:'🌡️'}}
+function windDir(deg){return['N','NE','E','SE','S','SW','W','NW'][Math.round(deg/45)%8]}
+function dayName(dateStr,i){
+  if(i===0) return 'Today';
+  if(i===1) return 'Tomorrow';
+  return new Date(dateStr).toLocaleDateString([],{weekday:'short'});
+}
+
+// ── Storage ───────────────────────────────────────────────────────────────────
+
+function load(key,fb){try{const v=localStorage.getItem(key);return v?JSON.parse(v):fb}catch{return fb}}
+function save(key,val){try{localStorage.setItem(key,JSON.stringify(val))}catch{}}
+
+// ── Date helpers ──────────────────────────────────────────────────────────────
+
+function sod(d){return new Date(d.getFullYear(),d.getMonth(),d.getDate())}
+function dayOf(s){return sod(new Date(s)).getTime()}
+function isOverdue(s)    {if(!s)return false;return dayOf(s)<sod(new Date()).getTime()}
+function isToday(s)      {if(!s)return false;return dayOf(s)===sod(new Date()).getTime()}
+function isDueTomorrow(s){if(!s)return false;const t=new Date();t.setDate(t.getDate()+1);return dayOf(s)===sod(t).getTime()}
+function todayStr(){return new Date().toISOString().slice(0,10)}
+
+function formatDate(s){
+  if(!s)return null;
+  const d=new Date(s),diff=(dayOf(s)-sod(new Date()).getTime())/86400000;
+  const hasTime=s.includes('T')&&s.length>10;
+  const ts=hasTime?d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):null;
+  let label;
+  if(diff===0)label='Today';else if(diff===1)label='Tomorrow';else if(diff===-1)label='Yesterday';
+  else if(diff<0)label=`${Math.abs(Math.round(diff))}d ago`;
+  else if(diff<7)label=d.toLocaleDateString([],{weekday:'long'});
+  else label=d.toLocaleDateString([],{day:'numeric',month:'short'});
+  return ts?`${label} · ${ts}`:label;
+}
+
+function sortByPriorityDate(arr){
+  return[...arr].sort((a,b)=>{
+    const pd=PRIORITY_ORDER[a.priority]-PRIORITY_ORDER[b.priority];
+    if(pd!==0)return pd;
+    if(!a.dueDate&&!b.dueDate)return 0;
+    if(!a.dueDate)return 1;if(!b.dueDate)return-1;
+    return new Date(a.dueDate)-new Date(b.dueDate);
+  });
+}
+
+function getNextDue(dueDate,rec){
+  if(!dueDate||!rec||rec==='none')return null;
+  const d=new Date(dueDate);
+  if(rec==='daily')d.setDate(d.getDate()+1);
+  else if(rec==='weekly')d.setDate(d.getDate()+7);
+  else if(rec==='fortnightly')d.setDate(d.getDate()+14);
+  else if(rec==='monthly')d.setMonth(d.getMonth()+1);
+  else if(rec==='yearly')d.setFullYear(d.getFullYear()+1);
+  const hasTime=dueDate.includes('T')&&dueDate.length>10;
+  return hasTime?d.toISOString().slice(0,16):d.toISOString().slice(0,10);
+}
+
+function recurLabel(r){if(!r||r==='none')return null;return RECUR_CONFIG[r]||null}
+
+function msUntilHour(h){
+  const now=new Date(),target=new Date();
+  target.setHours(h,0,0,0);
+  if(target<=now)target.setDate(target.getDate()+1);
+  return target.getTime()-now.getTime();
+}
+
+// ── Financial Year helpers (Australian: July–June) ────────────────────────────
+
+function getFYForDate(d){
+  const m=d.getMonth(),y=d.getFullYear();
+  return m>=6?{start:y,end:y+1}:{start:y-1,end:y};
+}
+function getCurrentFY(){return getFYForDate(new Date())}
+function fyLabel(fy){return`FY ${fy.start}–${String(fy.end).slice(2)}`}
+function fyBounds(fy){
+  return{
+    from:new Date(fy.start,6,1),       // 1 Jul
+    to:  new Date(fy.end,5,30,23,59,59) // 30 Jun
+  };
+}
+function inFY(dateStr,fy){
+  const d=new Date(dateStr);
+  const b=fyBounds(fy);
+  return d>=b.from&&d<=b.to;
+}
+
+function groupFuelByMonth(entries){
+  const groups={};
+  entries.forEach(e=>{
+    const d=new Date(e.date);
+    const key=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    if(!groups[key])groups[key]={key,label:d.toLocaleDateString([],{month:'long',year:'numeric'}),entries:[]};
+    groups[key].entries.push(e);
+  });
+  return Object.values(groups).sort((a,b)=>b.key.localeCompare(a.key));
+}
+
+function fuelTotals(entries){
+  const t={total:0,litres:0,business:0,living:0,cash:0,count:entries.length};
+  entries.forEach(e=>{
+    t.total+=e.cost||0;
+    t.litres+=(e.litres||0);
+    if(e.paymentMethod==='business')t.business+=e.cost||0;
+    else if(e.paymentMethod==='living')t.living+=e.cost||0;
+    else if(e.paymentMethod==='cash')t.cash+=e.cost||0;
+  });
+  return t;
+}
+
+function fmt$(n){return n.toFixed(2)}
+function fmtL(n){return n>0?`${n.toFixed(1)} L`:''}
+
+// ── Notifications ─────────────────────────────────────────────────────────────
+
+function canNotify(){return 'Notification' in window}
+async function requestNotifPermission(){
+  if(!canNotify())return false;
+  if(Notification.permission==='granted')return true;
+  if(Notification.permission==='denied')return false;
+  return(await Notification.requestPermission())==='granted';
+}
+function fireNotification(title,body){
+  if(!canNotify()||Notification.permission!=='granted')return;
+  if(navigator.serviceWorker?.controller)
+    navigator.serviceWorker.controller.postMessage({type:'NOTIFY',title,body});
+  else try{new Notification(title,{body,icon:'./icon-192.png'})}catch{}
+}
+
+// ── SwipeCard ─────────────────────────────────────────────────────────────────
+
+function SwipeCard({onSwipeRight,onSwipeLeft,rightIcon='✓',rightColor='#6DBF6D',children}){
+  const wrapRef=useRef(null),innerRef=useRef(null),THRESH=72;
+  useEffect(()=>{
+    const wrap=wrapRef.current,inner=innerRef.current;if(!wrap||!inner)return;
+    let sx=0,sy=0,drag=false,cur=0;
+    const hr=()=>wrap.querySelector('.sh-r'),hl=()=>wrap.querySelector('.sh-l');
+    function snap(to,cb){inner.style.transition='transform .22s ease';inner.style.transform=`translateX(${to}px)`;const _r=hr(),_l=hl();if(_r)_r.style.opacity='0';if(_l)_l.style.opacity='0';setTimeout(()=>{inner.style.transition='none';inner.style.transform='translateX(0)';if(cb)cb()},230)}
+    function ts(e){sx=e.touches[0].clientX;sy=e.touches[0].clientY;drag=false;cur=0;inner.style.transition='none'}
+    function tm(e){const dx=e.touches[0].clientX-sx,dy=e.touches[0].clientY-sy;if(!drag){if(Math.abs(dx)>Math.abs(dy)&&Math.abs(dx)>8)drag=true;else if(Math.abs(dy)>8)return;else return}e.preventDefault();cur=Math.max(-115,Math.min(115,dx));inner.style.transform=`translateX(${cur}px)`;const _r=hr(),_l=hl();if(_r)_r.style.opacity=cur>0?String(Math.min(1,cur/THRESH)):'0';if(_l)_l.style.opacity=cur<0?String(Math.min(1,-cur/THRESH)):'0'}
+    function te(){if(!drag)return;drag=false;if(cur>THRESH)snap(160,onSwipeRight);else if(cur<-THRESH)snap(-160,onSwipeLeft);else snap(0)}
+    wrap.addEventListener('touchstart',ts,{passive:true});wrap.addEventListener('touchmove',tm,{passive:false});wrap.addEventListener('touchend',te,{passive:true});
+    return()=>{wrap.removeEventListener('touchstart',ts);wrap.removeEventListener('touchmove',tm);wrap.removeEventListener('touchend',te)};
+  },[onSwipeRight,onSwipeLeft]);
+  return(
+    <div ref={wrapRef} style={{position:'relative',borderRadius:14,overflow:'hidden'}}>
+      <div className="sh-r" style={{position:'absolute',inset:0,display:'flex',alignItems:'center',padding:'0 22px',background:rightColor+'2A',opacity:0}}><span style={{fontSize:26,fontWeight:800}}>{rightIcon}</span></div>
+      <div className="sh-l" style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'flex-end',padding:'0 22px',background:'#FF5C5C2A',opacity:0}}><span style={{fontSize:22}}>🗑</span></div>
+      <div ref={innerRef} style={{position:'relative',willChange:'transform'}}>{children}</div>
+    </div>
+  );
+}
+
+// ── App ───────────────────────────────────────────────────────────────────────
+
+const DEFAULT_SETTINGS={notifHour:9,notifEnabled:false,autoClearDays:30,swipeHintSeen:false,lastPaymentMethod:'business'};
+
+function App(){
+  const [items,        setItems]        = useState(()=>load(ITEMS_KEY,[]));
+  const [projects,     setProjects]     = useState(()=>load(PROJECTS_KEY,[]));
+  const [fuel,         setFuel]         = useState(()=>load(FUEL_KEY,[]));
+  const [fx,           setFx]           = useState(()=>load(FX_KEY,{rates:{},prev:{},updatedAt:null,error:null}));
+  const [weather,      setWeather]      = useState(()=>load(WEATHER_KEY,null));
+  const [books,        setBooks]        = useState(()=>load(BOOKS_KEY,{}));
+  const [tab,          setTab]          = useState('active');
+  const [showForm,     setShowForm]     = useState(false);
+  const [showProjForm, setShowProjForm] = useState(false);
+  const [showFuelForm, setShowFuelForm] = useState(false);
+  const [editItem,     setEditItem]     = useState(null);
+  const [editProj,     setEditProj]     = useState(null);
+  const [editFuel,     setEditFuel]     = useState(null);
+  const [defaultType,  setDefaultType]  = useState('reminder');
+  const [filterType,   setFilterType]   = useState('all');
+  const [projFilter,   setProjFilter]   = useState('all');
+  const [settings,     setSettings]     = useState(()=>({...DEFAULT_SETTINGS,...load(SETTINGS_KEY,{})}));
+  const [notifPerm,    setNotifPerm]    = useState(canNotify()?Notification.permission:'unsupported');
+  const [showSettings, setShowSettings] = useState(false);
+  const [searchQuery,  setSearchQuery]  = useState('');
+  const [showSearch,   setShowSearch]   = useState(false);
+  const [toast,        setToast]        = useState(null);
+  const toastTimer=useRef(null),importRef=useRef(null);
+
+  useEffect(()=>{save(ITEMS_KEY,items)},[items]);
+  useEffect(()=>{save(PROJECTS_KEY,projects)},[projects]);
+  useEffect(()=>{save(FUEL_KEY,fuel)},[fuel]);
+  useEffect(()=>{save(FX_KEY,fx)},[fx]);
+  useEffect(()=>{save(WEATHER_KEY,weather)},[weather]);
+  useEffect(()=>{save(BOOKS_KEY,books)},[books]);
+  useEffect(()=>{save(SETTINGS_KEY,settings)},[settings]);
+
+  // Fetch books — Open Library (Internet Archive), completely free, no key ever
+  const fetchBooks = useCallback(async(cat,force=false)=>{
+    const cached=load(BOOKS_KEY,{});
+    const entry=cached[cat];
+    if(!force&&entry?.fetchedAt){
+      const age=(Date.now()-new Date(entry.fetchedAt).getTime())/(1000*60*60);
+      if(age<24&&entry.items?.length>0) return;
+    }
+    setBooks(prev=>({...prev,[cat]:{...prev[cat],loading:true,error:null}}));
+    try{
+      const q=encodeURIComponent(BOOK_CATS[cat].query);
+      // Open Library search - free, no key, published 2020 onwards
+      const url=`https://openlibrary.org/search.json?q=${q}&sort=new&limit=24&fields=key,title,author_name,first_publish_year,cover_i,subject,number_of_pages_median,ratings_average,ratings_count&published_in=2020-2026`;
+      const res=await fetch(url,{headers:{'Accept':'application/json'}});
+      if(!res.ok) throw new Error(`Open Library returned ${res.status}`);
+      const data=await res.json();
+      if(!data.docs) throw new Error('Unexpected response format');
+      const items=(data.docs||[])
+        .filter(b=>b.title&&b.author_name?.length)
+        .map(b=>({
+          id:      b.key||Math.random().toString(),
+          title:   b.title,
+          authors: b.author_name||[],
+          year:    b.first_publish_year||null,
+          cover:   b.cover_i?`https://covers.openlibrary.org/b/id/${b.cover_i}-M.jpg`:null,
+          link:    b.key?`https://openlibrary.org${b.key}`:null,
+          pages:   b.number_of_pages_median||null,
+          rating:  b.ratings_average?Math.round(b.ratings_average*10)/10:null,
+          ratings: b.ratings_count||0,
+        }));
+      if(items.length===0) throw new Error('No results found — try refreshing');
+      const next={...cached,[cat]:{items,fetchedAt:new Date().toISOString(),total:data.numFound||0,loading:false,error:null}};
+      setBooks(next);
+      save(BOOKS_KEY,next);
+    }catch(e){
+      setBooks(prev=>({...prev,[cat]:{...prev[cat],loading:false,error:e.message||'Could not load books'}}));
+    }
+  },[]);
+
+  const fetchBooksRef=useRef(fetchBooks);
+  useEffect(()=>{fetchBooksRef.current=fetchBooks;},[fetchBooks]);
+
+  useEffect(()=>{
+    if(tab==='books') fetchBooksRef.current('litrpg'); // default category
+  },[tab]);
+
+  // Fetch weather — Open-Meteo, no API key required
+  const fetchWeather = useCallback(async(force=false)=>{
+    if(!force && weather?.updatedAt){
+      const age=(Date.now()-new Date(weather.updatedAt).getTime())/60000;
+      if(age<30) return;
+    }
+    setWeather(prev=>({...prev,loading:true,error:null}));
+    try{
+      const pos = await new Promise((res,rej)=>
+        navigator.geolocation.getCurrentPosition(res,rej,{timeout:10000})
+      );
+      const {latitude:lat,longitude:lon}=pos.coords;
+
+      // Fetch weather and location name in parallel
+      const [wxRes,geoRes]=await Promise.all([
+        fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m,wind_direction_10m,is_day&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,wind_speed_10m_max&timezone=auto&forecast_days=6`),
+        fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`,{headers:{'Accept-Language':'en'}})
+      ]);
+
+      const [wx,geo]=await Promise.all([wxRes.json(),geoRes.json()]);
+
+      const place=geo?.address?.suburb||geo?.address?.town||geo?.address?.city||geo?.address?.county||'Your location';
+      const state=geo?.address?.state||'';
+
+      setWeather({
+        current:  wx.current,
+        daily:    wx.daily,
+        place,
+        state,
+        lat,lon,
+        updatedAt: new Date().toISOString(),
+        loading:   false,
+        error:     null,
+      });
+    }catch(e){
+      const msg=e.code===1?'Location access denied — enable in Settings':'Could not fetch weather';
+      setWeather(prev=>({...prev,loading:false,error:msg}));
+    }
+  },[weather?.updatedAt]);
+
+  useEffect(()=>{
+    if(tab==='weather') fetchWeather();
+  },[tab]);
+
+  // Fetch exchange rates — Frankfurter (ECB data) with currency-api fallback, no keys required
+  const fetchRates = useCallback(async(force=false)=>{
+    const stored = load(FX_KEY, {rates:{},prev:{},updatedAt:null,error:null});
+    if(!force && stored.updatedAt){
+      const age=(Date.now()-new Date(stored.updatedAt).getTime())/60000;
+      if(age<60) return;
+    }
+    setFx(prev=>({...prev,loading:true,error:null}));
+    try{
+      let rates={};
+      let date='';
+      // Try Frankfurter first
+      try{
+        const res=await fetch('https://api.frankfurter.app/latest?from=AUD&to=USD,JPY');
+        if(res.ok){
+          const data=await res.json();
+          rates=data.rates;
+          date=data.date;
+        } else throw new Error('Frankfurter unavailable');
+      }catch{
+        // Fallback: fawazahmed0 currency API (Cloudflare Pages CDN, no key)
+        const res=await fetch('https://latest.currency-api.pages.dev/v1/currencies/aud.json');
+        if(!res.ok) throw new Error('Both rate sources failed');
+        const data=await res.json();
+        date=data.date||'';
+        rates={ USD: data.aud.usd, JPY: data.aud.jpy };
+      }
+      // Round to sensible precision
+      if(rates.USD) rates.USD=Math.round(rates.USD*10000)/10000;
+      if(rates.JPY) rates.JPY=Math.round(rates.JPY*100)/100;
+      const prev=stored.rates||{};
+      const next={rates,prev,date,updatedAt:new Date().toISOString(),loading:false,error:null};
+      setFx(next);
+      save(FX_KEY,next);
+    }catch(e){
+      setFx(prev=>({...prev,loading:false,error:'Could not fetch rates — check your connection and try again'}));
+    }
+  },[]); // no deps — reads latest from localStorage directly
+
+  // Use a ref so the tab-change effect always calls the latest fetchRates
+  const fetchRatesRef = useRef(fetchRates);
+  useEffect(()=>{ fetchRatesRef.current=fetchRates; },[fetchRates]);
+
+  useEffect(()=>{
+    if(tab==='currency') fetchRatesRef.current();
+  },[tab]);
+
+  // Auto-clear completed
+  useEffect(()=>{
+    if(settings.autoClearDays===0)return;
+    const cutoff=new Date();cutoff.setDate(cutoff.getDate()-settings.autoClearDays);
+    setItems(prev=>{const f=prev.filter(i=>!i.completedAt||new Date(i.completedAt)>cutoff);return f.length===prev.length?prev:f});
+  // eslint-disable-next-line
+  },[]);
+
+  // Notifications
+  const checkNotifications=useCallback(()=>{
+    if(!settings.notifEnabled||Notification.permission!=='granted')return;
+    if(new Date().getHours()<settings.notifHour)return;
+    const log=load(NOTIF_KEY,{}),today=new Date().toISOString().slice(0,10);
+    let updated=false;
+    items.filter(i=>!i.completedAt&&isDueTomorrow(i.dueDate)).forEach(item=>{
+      const key=`${item.id}-${today}`;if(log[key])return;
+      const rl=recurLabel(item.recurrence);
+      fireNotification(`${TYPE_CONFIG[item.type].icon} ${item.title}`,`Due tomorrow${rl?` · Repeats ${item.recurrence}`:''}  · ${PRIORITY_CONFIG[item.priority].label} priority`);
+      log[key]=true;updated=true;
+    });
+    projects.filter(p=>p.status!=='done'&&isDueTomorrow(p.dueDate)).forEach(p=>{
+      const key=`proj-${p.id}-${today}`;if(log[key])return;
+      const cat=PROJECT_CATS[p.category]||PROJECT_CATS.general;
+      fireNotification(`${cat.icon} ${p.name}`,`Project deadline tomorrow · ${cat.label}`);
+      log[key]=true;updated=true;
+    });
+    if(updated)save(NOTIF_KEY,log);
+  },[items,projects,settings]);
+
+  useEffect(()=>{
+    checkNotifications();
+    const interval=setInterval(checkNotifications,5*60*1000);
+    const onVisible=()=>{if(!document.hidden)checkNotifications()};
+    document.addEventListener('visibilitychange',onVisible);
+    const scheduleNext=()=>{const ms=msUntilHour(settings.notifHour);const t=setTimeout(()=>{checkNotifications();scheduleNext()},ms);return t};
+    const scheduled=settings.notifEnabled?scheduleNext():null;
+    return()=>{clearInterval(interval);document.removeEventListener('visibilitychange',onVisible);if(scheduled)clearTimeout(scheduled)};
+  },[checkNotifications,settings.notifHour,settings.notifEnabled]);
+
+  // Toast
+  function showToast(msg,undo=null){if(toastTimer.current)clearTimeout(toastTimer.current);setToast({msg,undo});toastTimer.current=setTimeout(()=>setToast(null),undo?4500:2500)}
+  function handleUndo(){
+    if(toastTimer.current)clearTimeout(toastTimer.current);
+    if(!toast?.undo){setToast(null);return}
+    const{type,payload}=toast.undo;
+    if(type==='item'){setItems(prev=>sortByPriorityDate([...prev,payload]));showToast('Restored ✓')}
+    else if(type==='project'){setProjects(prev=>[...prev,payload]);showToast('Project restored ✓')}
+    else if(type==='fuel'){setFuel(prev=>[...prev,payload].sort((a,b)=>b.date.localeCompare(a.date)));showToast('Entry restored ✓')}
+    else setToast(null);
+  }
+
+  // Item CRUD
+  function openAdd(type='reminder'){setDefaultType(type);setEditItem(null);setShowForm(true);setShowSettings(false);setShowSearch(false)}
+  function openEdit(item){setDefaultType(item.type);setEditItem(item);setShowForm(true)}
+  function saveItem(data){
+    if(editItem)setItems(prev=>prev.map(i=>i.id===editItem.id?{...i,...data}:i));
+    else setItems(prev=>[...prev,{...data,id:Date.now().toString(),createdAt:new Date().toISOString()}]);
+    showToast(editItem?'Saved ✓':'Added ✓');setShowForm(false);setEditItem(null);
+  }
+  function completeItem(id){
+    const item=items.find(i=>i.id===id);if(!item)return;
+    const completedAt=new Date().toISOString();
+    if(item.recurrence&&item.recurrence!=='none'&&item.dueDate){
+      const next={...item,id:(Date.now()+1).toString(),dueDate:getNextDue(item.dueDate,item.recurrence),createdAt:completedAt,completedAt:null};
+      setItems(prev=>[...prev.map(i=>i.id===id?{...i,completedAt}:i),next]);
+      showToast(`Done! Next ${item.recurrence} entry added`);
+    }else{setItems(prev=>prev.map(i=>i.id===id?{...i,completedAt}:i));showToast('Done ✓')}
+  }
+  function completeMultiple(ids){
+    const now=new Date().toISOString();const newItems=[];
+    setItems(prev=>{
+      const updated=prev.map(i=>{
+        if(!ids.includes(i.id))return i;
+        if(i.recurrence&&i.recurrence!=='none'&&i.dueDate)newItems.push({...i,id:(Date.now()+Math.random()).toString(),dueDate:getNextDue(i.dueDate,i.recurrence),createdAt:now,completedAt:null});
+        return{...i,completedAt:now};
+      });return[...updated,...newItems];
+    });
+    showToast(`${ids.length} item${ids.length>1?'s':''} done ✓`);
+  }
+  function restoreItem(id){setItems(prev=>prev.map(i=>i.id===id?{...i,completedAt:null}:i));showToast('Restored ✓')}
+  function deleteItem(id){const item=items.find(i=>i.id===id);setItems(prev=>prev.filter(i=>i.id!==id));showToast('Deleted',{type:'item',payload:item})}
+  function clearAllCompleted(){const n=items.filter(i=>i.completedAt).length;setItems(prev=>prev.filter(i=>!i.completedAt));showToast(`${n} completed item${n!==1?'s':''} cleared`)}
+
+  // Project CRUD
+  function saveProject(data){
+    if(editProj)setProjects(prev=>prev.map(p=>p.id===editProj.id?{...p,...data,updatedAt:new Date().toISOString()}:p));
+    else setProjects(prev=>[...prev,{...data,id:Date.now().toString(),tasks:[],log:[],createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()}]);
+    showToast(editProj?'Project saved ✓':'Project created ✓');setShowProjForm(false);setEditProj(null);
+  }
+  function deleteProject(id){const p=projects.find(x=>x.id===id);setProjects(prev=>prev.filter(x=>x.id!==id));showToast('Project deleted',{type:'project',payload:p})}
+  function updateProjectTasks(id,tasks){setProjects(prev=>prev.map(p=>p.id===id?{...p,tasks,updatedAt:new Date().toISOString()}:p))}
+  function updateProjectStatus(id,status){setProjects(prev=>prev.map(p=>p.id===id?{...p,status,updatedAt:new Date().toISOString()}:p))}
+  function addProjectLogEntry(id,text){
+    const entry={id:Date.now().toString(),text,createdAt:new Date().toISOString()};
+    setProjects(prev=>prev.map(p=>p.id===id?{...p,log:[entry,...(p.log||[])],updatedAt:new Date().toISOString()}:p));
+  }
+  function deleteProjectLogEntry(pid,eid){setProjects(prev=>prev.map(p=>p.id===pid?{...p,log:(p.log||[]).filter(e=>e.id!==eid)}:p))}
+
+  // Fuel CRUD
+  function saveFuel(data){
+    if(editFuel)setFuel(prev=>[...prev.filter(e=>e.id!==editFuel.id),{...editFuel,...data}].sort((a,b)=>b.date.localeCompare(a.date)));
+    else setFuel(prev=>[{...data,id:Date.now().toString(),createdAt:new Date().toISOString()},...prev].sort((a,b)=>b.date.localeCompare(a.date)));
+    setSettings(s=>({...s,lastPaymentMethod:data.paymentMethod}));
+    showToast(editFuel?'Entry updated ✓':'Fill-up recorded ✓');setShowFuelForm(false);setEditFuel(null);
+  }
+  function deleteFuel(id){const e=fuel.find(x=>x.id===id);setFuel(prev=>prev.filter(x=>x.id!==id));showToast('Entry deleted',{type:'fuel',payload:e})}
+
+  // Export / Import
+  function exportData(){
+    const blob=new Blob([JSON.stringify({items,projects,fuel},null,2)],{type:'application/json'});
+    const url=URL.createObjectURL(blob),a=document.createElement('a');
+    a.href=url;a.download=`agenda-backup-${new Date().toISOString().slice(0,10)}.json`;a.click();
+    URL.revokeObjectURL(url);showToast('Backup saved ✓');
+  }
+  function handleImportFile(e){
+    const file=e.target.files?.[0];if(!file)return;
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      try{
+        const d=JSON.parse(ev.target.result);
+        if(Array.isArray(d)){setItems(d);showToast(`${d.length} items imported ✓`)}
+        else if(d.items){
+          setItems(d.items);
+          if(d.projects)setProjects(d.projects);
+          if(d.fuel)setFuel(d.fuel);
+          showToast('Backup imported ✓');
+        }else throw 0;
+      }catch{showToast('Invalid backup file')}
+    };
+    reader.readAsText(file);e.target.value='';
+  }
+  async function handleEnableNotifs(){
+    const granted=await requestNotifPermission();
+    setNotifPerm(canNotify()?Notification.permission:'unsupported');
+    if(granted){setSettings(s=>({...s,notifEnabled:true}));showToast('Notifications enabled ✓')}
+    else showToast('Blocked — check Settings › Safari › this site');
+  }
+
+  // Derived
+  const active=items.filter(i=>!i.completedAt);
+  const completed=[...items.filter(i=>i.completedAt)].sort((a,b)=>new Date(b.completedAt)-new Date(a.completedAt));
+  const buyItems=sortByPriorityDate(active.filter(i=>i.type==='buy'));
+  const nonBuy=arr=>arr.filter(i=>i.type!=='buy');
+  function applyFilter(arr){return filterType==='all'?arr:arr.filter(i=>i.type===filterType)}
+  const q=searchQuery.toLowerCase();
+  const searchResults=q?applyFilter(tab==='completed'?completed:active).filter(i=>i.title.toLowerCase().includes(q)||(i.notes||'').toLowerCase().includes(q)):null;
+  const overdueItems =applyFilter(nonBuy(active).filter(i=>i.dueDate&&isOverdue(i.dueDate))).sort((a,b)=>new Date(a.dueDate)-new Date(b.dueDate));
+  const todayItems   =sortByPriorityDate(applyFilter(nonBuy(active).filter(i=>isToday(i.dueDate))));
+  const upcomingItems=sortByPriorityDate(applyFilter(nonBuy(active).filter(i=>!i.dueDate||(!isOverdue(i.dueDate)&&!isToday(i.dueDate)))));
+  const completedFiltered=applyFilter(completed);
+  const filteredProjects=projFilter==='all'?projects:projects.filter(p=>p.category===projFilter);
+  const activeProjects=[...filteredProjects.filter(p=>p.status!=='done')].sort((a,b)=>{
+    const ao=a.dueDate&&isOverdue(a.dueDate)?0:a.dueDate&&isToday(a.dueDate)?1:2;
+    const bo=b.dueDate&&isOverdue(b.dueDate)?0:b.dueDate&&isToday(b.dueDate)?1:2;
+    if(ao!==bo)return ao-bo;return new Date(b.updatedAt)-new Date(a.updatedAt);
+  });
+  const archivedProjects=filteredProjects.filter(p=>p.status==='done');
+
+  function cardActions(item){
+    return item.completedAt
+      ?{onSwipeRight:()=>restoreItem(item.id),onSwipeLeft:()=>deleteItem(item.id),rightIcon:'↩',rightColor:'#6DBF6D'}
+      :{onSwipeRight:()=>completeItem(item.id),onSwipeLeft:()=>deleteItem(item.id),rightIcon:'✓',rightColor:'#6DBF6D'};
+  }
+
+  const TABS=[
+    {id:'active',   icon:'✓',  label:'Active',    badge:nonBuy(active).length},
+    {id:'shopping', icon:'🛒', label:'Shopping',  badge:buyItems.length},
+    {id:'projects', icon:'📁', label:'Projects',  badge:projects.filter(p=>p.status!=='done').length},
+    {id:'fuel',     icon:'⛽', label:'Fuel',      badge:null},
+    {id:'currency', icon:'💱', label:'Rates',     badge:null},
+    {id:'weather',  icon:'🌤', label:'Weather',   badge:null},
+    {id:'books',    icon:'📚', label:'Books',     badge:null},
+    {id:'completed',icon:'✅', label:'Done',      badge:completed.length},
+  ];
+
+  const INFO_TABS=new Set(['currency','weather','books']);
+
+  const dismissSwipeHint=()=>setSettings(s=>({...s,swipeHintSeen:true}));
+
+  return(
+    <div style={S.root}>
+      {toast&&(
+        <div style={S.toast}>
+          <span>{toast.msg}</span>
+          {toast.undo&&<button style={S.undoBtn} onClick={handleUndo}>UNDO</button>}
+        </div>
+      )}
+
+      {!settings.swipeHintSeen&&(tab==='active'||tab==='completed')&&nonBuy(active).length>0&&(
+        <div style={S.swipeBanner}>
+          <span style={{fontSize:14,fontWeight:600,color:'#C084FC'}}>👆 Swipe right to complete · swipe left to delete</span>
+          <button style={S.swipeBannerClose} onClick={dismissSwipeHint}>Got it</button>
+        </div>
+      )}
+
+      <header style={{...S.header,paddingTop:'max(18px, env(safe-area-inset-top))'}}>
+        <div style={S.headerTop}>
+          <span style={S.logo}>AGENDA</span>
+          <div style={{display:'flex',gap:8}}>
+            {!INFO_TABS.has(tab)&&tab!=='projects'&&tab!=='fuel'&&<button style={{...S.iconBtn,color:showSearch?'#F0D060':'#888'}} onClick={()=>{setShowSearch(s=>!s);setSearchQuery('')}}>🔍</button>}
+            <button style={{...S.iconBtn,color:showSettings?'#F0D060':'#888'}} onClick={()=>setShowSettings(s=>!s)}>⚙</button>
+            <button
+              style={{...S.addBtn,opacity:INFO_TABS.has(tab)?0:1,pointerEvents:INFO_TABS.has(tab)?'none':'auto'}}
+              onClick={()=>{
+                if(INFO_TABS.has(tab)) return;
+                if(tab==='projects'){setEditProj(null);setShowProjForm(true);setShowSettings(false)}
+                else if(tab==='fuel'){setEditFuel(null);setShowFuelForm(true);setShowSettings(false)}
+                else openAdd(tab==='shopping'?'buy':'reminder');
+              }}>+</button>
+          </div>
+        </div>
+
+        {showSearch&&tab!=='projects'&&tab!=='fuel'&&(
+          <div style={{marginBottom:12}}>
+            <input style={S.searchInput} placeholder="Search items…" autoFocus value={searchQuery} onChange={e=>setSearchQuery(e.target.value)}/>
+          </div>
+        )}
+
+        {showSettings&&(
+          <div style={S.settingsPanel}>
+            <p style={S.sectionLbl}>Notifications</p>
+            <div style={S.settingsRow}>
+              <span style={S.settingsLabel}>🔔 Day-before alerts
+                {notifPerm==='unsupported'&&<span style={S.sHint}> (not supported)</span>}
+                {notifPerm==='denied'&&<span style={{...S.sHint,color:'#FF5C5C'}}> (blocked)</span>}
+              </span>
+              {notifPerm!=='unsupported'&&(settings.notifEnabled&&notifPerm==='granted'
+                ?<button style={S.toggleOn} onClick={()=>setSettings(s=>({...s,notifEnabled:false}))}>ON</button>
+                :<button style={S.toggleOff} onClick={handleEnableNotifs}>OFF</button>)}
+            </div>
+            {settings.notifEnabled&&notifPerm==='granted'&&(
+              <div style={S.settingsRow}>
+                <span style={S.settingsLabel}>Alert time</span>
+                <select style={S.settingsSelect} value={settings.notifHour} onChange={e=>setSettings(s=>({...s,notifHour:Number(e.target.value)}))}>
+                  {[6,7,8,9,10,11,12].map(h=><option key={h} value={h}>{h}:00 {h<12?'am':'pm'}</option>)}
+                </select>
+              </div>
+            )}
+            <div style={{borderTop:'1px solid #2A2A2A',paddingTop:12,marginTop:4}}>
+              <p style={S.sectionLbl}>Completed Items</p>
+              <div style={S.settingsRow}>
+                <span style={S.settingsLabel}>Auto-clear after</span>
+                <select style={S.settingsSelect} value={settings.autoClearDays} onChange={e=>setSettings(s=>({...s,autoClearDays:Number(e.target.value)}))}>
+                  <option value={0}>Never</option><option value={7}>7 days</option>
+                  <option value={30}>30 days</option><option value={60}>60 days</option>
+                </select>
+              </div>
+              <button style={{...S.dataBtn,marginTop:8,color:'#FF9E4A',borderColor:'#FF9E4A33'}} onClick={clearAllCompleted}>
+                Clear all completed now ({completed.length} items)
+              </button>
+            </div>
+            <div style={{borderTop:'1px solid #2A2A2A',paddingTop:12,marginTop:4}}>
+              <p style={S.sectionLbl}>Data</p>
+              <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+                <button style={S.dataBtn} onClick={exportData}>⬇ Export Backup</button>
+                <button style={S.dataBtn} onClick={()=>importRef.current?.click()}>⬆ Import Backup</button>
+                <input ref={importRef} type="file" accept=".json" style={{display:'none'}} onChange={handleImportFile}/>
+              </div>
+              <p style={{...S.sHint,marginTop:8}}>Export saves a .json file. Import replaces all data — export first.</p>
+            </div>
+          </div>
+        )}
+
+        {/* Tab bar — scrollable icon pills */}
+        <div style={{display:'flex',gap:8,overflowX:'auto',paddingBottom:14,scrollbarWidth:'none',WebkitOverflowScrolling:'touch'}}>
+          {TABS.map(t=>{
+            const active=tab===t.id;
+            return(
+              <button key={t.id}
+                style={{
+                  display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',
+                  gap:4,flexShrink:0,minWidth:68,
+                  background:active?'#F0D060':'#1C1C1C',
+                  border:`2px solid ${active?'#F0D060':'#2A2A2A'}`,
+                  borderRadius:16,padding:'11px 14px',cursor:'pointer',
+                  position:'relative',
+                }}
+                onClick={()=>{setTab(t.id);setShowSettings(false);setSearchQuery('')}}>
+                <span style={{fontSize:24,lineHeight:1}}>{t.icon}</span>
+                <span style={{fontSize:12,fontWeight:800,color:active?'#141414':'#777',whiteSpace:'nowrap'}}>
+                  {t.label}
+                </span>
+                {t.badge>0&&(
+                  <span style={{
+                    position:'absolute',top:-6,right:-6,
+                    background:active?'#141414':'#F0D060',
+                    color:active?'#F0D060':'#141414',
+                    borderRadius:10,padding:'1px 6px',
+                    fontSize:11,fontWeight:800,lineHeight:1.4,
+                    minWidth:18,textAlign:'center',
+                  }}>{t.badge}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {(tab==='active'||tab==='completed')&&(
+          <div style={S.filters}>
+            {['all','reminder','appointment'].map(f=>(
+              <button key={f} style={{...S.filterBtn,...(filterType===f?S.filterActive:{})}} onClick={()=>setFilterType(f)}>
+                {f==='all'?'All':TYPE_CONFIG[f]?`${TYPE_CONFIG[f].icon} ${TYPE_CONFIG[f].label}`:f}
+              </button>
+            ))}
+          </div>
+        )}
+        {tab==='projects'&&(
+          <div style={S.filters}>
+            {['all',...Object.keys(PROJECT_CATS)].map(f=>(
+              <button key={f}
+                style={{...S.filterBtn,...(projFilter===f?{...S.filterActive,borderColor:(PROJECT_CATS[f]?.color||'#F0D060')+'66',color:PROJECT_CATS[f]?.color||'#F0D060'}:{})}}
+                onClick={()=>setProjFilter(f)}>
+                {f==='all'?'All':`${PROJECT_CATS[f].icon} ${PROJECT_CATS[f].label}`}
+              </button>
+            ))}
+          </div>
+        )}
+      </header>
+
+      <main style={{...S.main,paddingBottom:'max(80px, calc(60px + env(safe-area-inset-bottom)))'}}>
+
+        {searchQuery&&(
+          searchResults.length===0
+            ?<div style={S.empty}>No results for "{searchQuery}"</div>
+            :searchResults.map(item=>(
+              <SwipeCard key={item.id} {...cardActions(item)}>
+                <ItemCard item={item} onComplete={()=>completeItem(item.id)} onRestore={()=>restoreItem(item.id)} onEdit={()=>openEdit(item)} onDelete={()=>deleteItem(item.id)}/>
+              </SwipeCard>
+            ))
+        )}
+
+        {!searchQuery&&tab==='active'&&(
+          <>
+            {overdueItems.length>0&&<><SectionHeader label="OVERDUE" color="#FF5C5C" count={overdueItems.length}/>
+              {overdueItems.map(item=><SwipeCard key={item.id} {...cardActions(item)}><ItemCard item={item} onComplete={()=>completeItem(item.id)} onRestore={()=>restoreItem(item.id)} onEdit={()=>openEdit(item)} onDelete={()=>deleteItem(item.id)}/></SwipeCard>)}</>}
+            {todayItems.length>0&&<><SectionHeader label="TODAY" color="#F0D060" count={todayItems.length}/>
+              {todayItems.map(item=><SwipeCard key={item.id} {...cardActions(item)}><ItemCard item={item} onComplete={()=>completeItem(item.id)} onRestore={()=>restoreItem(item.id)} onEdit={()=>openEdit(item)} onDelete={()=>deleteItem(item.id)}/></SwipeCard>)}</>}
+            {upcomingItems.length>0&&<>
+              {(overdueItems.length>0||todayItems.length>0)&&<SectionHeader label="UPCOMING" color="#666" count={upcomingItems.length}/>}
+              {upcomingItems.map(item=><SwipeCard key={item.id} {...cardActions(item)}><ItemCard item={item} onComplete={()=>completeItem(item.id)} onRestore={()=>restoreItem(item.id)} onEdit={()=>openEdit(item)} onDelete={()=>deleteItem(item.id)}/></SwipeCard>)}</>}
+            {nonBuy(active).length===0&&<div style={S.empty}>{'Nothing here yet.\nTap + to add something.'}</div>}
+          </>
+        )}
+
+        {!searchQuery&&tab==='shopping'&&(
+          <ShoppingList items={buyItems} onCompleteMultiple={completeMultiple} onDelete={deleteItem} onEdit={openEdit}/>
+        )}
+
+        {!searchQuery&&tab==='projects'&&(
+          <ProjectsView active={activeProjects} archived={archivedProjects}
+            onEdit={p=>{setEditProj(p);setShowProjForm(true)}}
+            onDelete={deleteProject}
+            onUpdateTasks={(id,tasks)=>updateProjectTasks(id,tasks)}
+            onUpdateStatus={(id,status)=>updateProjectStatus(id,status)}
+            onAddLog={(id,text)=>addProjectLogEntry(id,text)}
+            onDeleteLog={(pid,eid)=>deleteProjectLogEntry(pid,eid)}
+          />
+        )}
+
+        {!searchQuery&&tab==='fuel'&&(
+          <FuelView
+            entries={fuel}
+            onEdit={e=>{setEditFuel(e);setShowFuelForm(true)}}
+            onDelete={deleteFuel}
+            onAdd={()=>{setEditFuel(null);setShowFuelForm(true)}}
+          />
+        )}
+
+        {!searchQuery&&tab==='currency'&&(
+          <CurrencyView fx={fx} onRefresh={()=>fetchRates(true)}/>
+        )}
+
+        {!searchQuery&&tab==='weather'&&(
+          <WeatherView weather={weather} onRefresh={()=>fetchWeather(true)}/>
+        )}
+
+        {!searchQuery&&tab==='books'&&(
+          <BooksView books={books} onFetch={(cat,force)=>fetchBooksRef.current(cat,force)}/>
+        )}
+
+        {!searchQuery&&tab==='completed'&&(
+          completedFiltered.length===0
+            ?<div style={S.empty}>{completed.length===0?'Nothing completed yet.':`No ${filterType}s completed yet.`}</div>
+            :<>{completedFiltered.map(item=>(
+              <SwipeCard key={item.id} {...cardActions(item)}>
+                <ItemCard item={item} onComplete={()=>completeItem(item.id)} onRestore={()=>restoreItem(item.id)} onEdit={()=>openEdit(item)} onDelete={()=>deleteItem(item.id)}/>
+              </SwipeCard>
+            ))}<p style={S.hint}>Swipe right to restore · swipe left to delete</p></>
+        )}
+      </main>
+
+      {showForm&&<ItemForm initial={editItem} defaultType={defaultType} onSave={saveItem} onClose={()=>{setShowForm(false);setEditItem(null)}}/>}
+      {showProjForm&&<ProjectForm initial={editProj} onSave={saveProject} onClose={()=>{setShowProjForm(false);setEditProj(null)}}/>}
+      {showFuelForm&&<FuelForm initial={editFuel} defaultMethod={settings.lastPaymentMethod} onSave={saveFuel} onClose={()=>{setShowFuelForm(false);setEditFuel(null)}}/>}
+    </div>
+  );
+}
+
+// ── Books View ────────────────────────────────────────────────────────────────
+
+function BooksView({books,onFetch}){
+  const [cat,setCat]=useState('litrpg');
+  const [expanded,setExpanded]=useState(null);
+
+  const catData=BOOK_CATS[cat];
+  const entry=books[cat]||{};
+  const items=entry.items||[];
+  const loading=entry.loading;
+  const error=entry.error;
+
+  function handleCat(c){
+    setCat(c);
+    setExpanded(null);
+    onFetch(c);
+  }
+
+  function handleRefresh(){onFetch(cat,true)}
+
+  return(
+    <div style={{display:'flex',flexDirection:'column',gap:14}}>
+
+      {/* Category tabs */}
+      <div style={{display:'flex',gap:8}}>
+        {Object.entries(BOOK_CATS).map(([k,v])=>(
+          <button key={k}
+            style={{
+              flex:1,background:'#1C1C1C',border:`2px solid ${cat===k?v.color:'#2A2A2A'}`,
+              borderRadius:12,padding:'12px 8px',cursor:'pointer',
+              color:cat===k?v.color:'#555',fontWeight:700,fontSize:14,
+              background:cat===k?v.color+'18':'#1C1C1C',
+            }}
+            onClick={()=>handleCat(k)}>
+            {v.icon} {v.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Header row */}
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <div>
+          <div style={{fontSize:16,fontWeight:800,color:'#F5F0E8'}}>{catData.icon} New {catData.label} Releases</div>
+          {entry.fetchedAt&&<div style={{fontSize:12,color:'#444',marginTop:2}}>
+            Updated {new Date(entry.fetchedAt).toLocaleDateString([],{day:'numeric',month:'short'})}
+          </div>}
+        </div>
+        <button style={{...S.fyNavBtn,width:50,height:50,fontSize:20}} onClick={handleRefresh}>↻</button>
+      </div>
+
+      {/* Error */}
+      {error&&(
+        <div style={{background:'#FF5C5C18',border:'1px solid #FF5C5C44',borderRadius:12,padding:'14px 16px',display:'flex',gap:12,alignItems:'flex-start'}}>
+          <span style={{fontSize:20}}>⚠️</span>
+          <div>
+            <div style={{fontSize:14,color:'#FF9E4A',fontWeight:700,marginBottom:4}}>Could not load books</div>
+            <div style={{fontSize:13,color:'#666'}}>{error}</div>
+            <button style={{...S.actionBtn,marginTop:12,padding:'10px 18px',fontSize:14}} onClick={handleRefresh}>Try Again</button>
+          </div>
+        </div>
+      )}
+
+      {/* Loading */}
+      {loading&&(
+        <div style={{textAlign:'center',padding:'40px 0'}}>
+          <div style={{fontSize:40,marginBottom:12}}>📚</div>
+          <div style={{color:'#666',fontSize:15,fontWeight:600}}>Searching for new releases…</div>
+        </div>
+      )}
+
+      {/* No results */}
+      {!loading&&!error&&items.length===0&&(
+        <div style={{textAlign:'center',padding:'40px 0'}}>
+          <div style={{fontSize:40,marginBottom:12}}>{catData.icon}</div>
+          <div style={{color:'#555',fontSize:15,fontWeight:600,marginBottom:16}}>No books loaded yet</div>
+          <button style={{...S.actionBtn,padding:'14px 24px'}} onClick={handleRefresh}>Search Now</button>
+        </div>
+      )}
+
+      {/* Book list */}
+      {!loading&&items.map((book,i)=>(
+        <BookCard key={book.id||i} book={book} cat={catData}
+          expanded={expanded===book.id}
+          onToggle={()=>setExpanded(prev=>prev===book.id?null:book.id)}/>
+      ))}
+
+      {items.length>0&&(
+        <p style={{...S.hint,marginTop:4}}>
+          Open Library (Internet Archive) · Free · No API key · Cached 24h · {entry.total?`${entry.total.toLocaleString()} total results`:''}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function BookCard({book,cat,expanded,onToggle,fmtDate,stars}){
+  return(
+    <div style={{background:'#1C1C1C',borderRadius:14,overflow:'hidden',border:`1px solid ${cat.color}18`}}>
+      <div style={{display:'flex',gap:14,padding:'16px',cursor:'pointer'}} onClick={onToggle}>
+        {/* Cover */}
+        <div style={{width:64,flexShrink:0}}>
+          {book.cover
+            ?<img src={book.cover} alt={book.title}
+                style={{width:64,height:96,objectFit:'cover',borderRadius:6,display:'block',background:'#242424'}}/>
+            :<div style={{width:64,height:96,borderRadius:6,background:cat.color+'22',display:'flex',alignItems:'center',justifyContent:'center',fontSize:28}}>{cat.icon}</div>
+          }
+        </div>
+
+        {/* Info */}
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:16,fontWeight:800,color:'#F5F0E8',lineHeight:1.3,marginBottom:5,wordBreak:'break-word'}}>
+            {book.title}
+          </div>
+          <div style={{fontSize:13,color:'#888',fontWeight:600,marginBottom:7}}>
+            {book.authors.slice(0,2).join(', ')}
+          </div>
+          <div style={{display:'flex',gap:7,flexWrap:'wrap',alignItems:'center'}}>
+            {book.year&&<span style={{fontSize:12,fontWeight:700,color:cat.color,background:cat.color+'18',borderRadius:5,padding:'2px 8px'}}>{book.year}</span>}
+            {book.rating&&book.ratings>0&&<span style={{fontSize:12,color:'#F0D060',fontWeight:700}}>★ {book.rating}</span>}
+            {book.pages&&<span style={{fontSize:12,color:'#444',fontWeight:600}}>{book.pages} pp</span>}
+          </div>
+        </div>
+
+        <span style={{color:'#444',fontSize:14,flexShrink:0,alignSelf:'flex-start',marginTop:2}}>
+          {expanded?'▲':'▼'}
+        </span>
+      </div>
+
+      {expanded&&(
+        <div style={{padding:'14px 16px 16px',borderTop:'1px solid #242424'}}>
+          <div style={{fontSize:13,color:'#555',marginBottom:14,fontStyle:'italic'}}>
+            Published {book.year||'unknown'} · {book.pages?`${book.pages} pages · `:''}Open Library
+          </div>
+          {book.rating&&book.ratings>0&&(
+            <div style={{fontSize:13,color:'#F0D060',marginBottom:14,fontWeight:600}}>
+              ★ {book.rating} / 5 from {book.ratings.toLocaleString()} reader{book.ratings!==1?'s':''}
+            </div>
+          )}
+          {book.link&&(
+            <a href={book.link} target="_blank" rel="noopener noreferrer"
+              style={{display:'inline-block',background:cat.color+'22',border:`2px solid ${cat.color}66`,color:cat.color,borderRadius:10,padding:'12px 20px',fontSize:14,fontWeight:700,textDecoration:'none'}}>
+              View on Open Library ↗
+            </a>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Weather View ──────────────────────────────────────────────────────────────
+
+function WeatherView({weather,onRefresh}){
+  const [loading,setLoading]=useState(false);
+
+  async function handleRefresh(){setLoading(true);await onRefresh();setLoading(false)}
+
+  function timeSince(iso){
+    if(!iso) return null;
+    const mins=Math.round((Date.now()-new Date(iso).getTime())/60000);
+    if(mins<1)  return 'just now';
+    if(mins<60) return `${mins}m ago`;
+    return `${Math.floor(mins/60)}h ago`;
+  }
+
+  // Initial state — no data yet
+  if(!weather&&!loading){
+    return(
+      <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:20,marginTop:60}}>
+        <div style={{fontSize:64}}>🌤️</div>
+        <div style={{fontSize:18,fontWeight:700,color:'#F5F0E8',textAlign:'center'}}>Weather for your location</div>
+        <div style={{fontSize:15,color:'#666',textAlign:'center',lineHeight:1.6}}>Tap below to fetch current conditions.<br/>You'll be asked to allow location access.</div>
+        <button style={{...S.saveBtn,marginTop:0,padding:'16px 40px',fontSize:17}} onClick={handleRefresh}>
+          Get Weather
+        </button>
+        <p style={{fontSize:13,color:'#444',textAlign:'center',fontStyle:'italic'}}>Open-Meteo · Bureau of Meteorology data<br/>No API key · Free · Location stays on device</p>
+      </div>
+    );
+  }
+
+  if(weather?.loading||loading){
+    return(
+      <div style={{textAlign:'center',marginTop:80}}>
+        <div style={{fontSize:48,marginBottom:16}}>⟳</div>
+        <div style={{color:'#555',fontSize:16,fontWeight:600}}>Fetching weather…</div>
+      </div>
+    );
+  }
+
+  if(weather?.error&&!weather?.current){
+    return(
+      <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:16,marginTop:60}}>
+        <div style={{fontSize:48}}>⚠️</div>
+        <div style={{color:'#FF9E4A',fontSize:16,fontWeight:700,textAlign:'center'}}>{weather.error}</div>
+        <button style={{...S.actionBtn,padding:'14px 28px'}} onClick={handleRefresh}>Try Again</button>
+      </div>
+    );
+  }
+
+  const c=weather?.current;
+  const d=weather?.daily;
+  const cond=wmo(c?.weather_code);
+  const isDay=c?.is_day!==0;
+
+  // Sky colour based on time of day and conditions
+  const skyGrad = isDay
+    ? (c?.weather_code<=1?'linear-gradient(160deg,#1a3a5c,#2a5080)':'linear-gradient(160deg,#2a2a3a,#3a3a4a)')
+    : 'linear-gradient(160deg,#0a0a1a,#1a1a2a)';
+
+  return(
+    <div style={{display:'flex',flexDirection:'column',gap:12}}>
+
+      {/* Current conditions hero card */}
+      <div style={{background:skyGrad,borderRadius:20,padding:'28px 22px 22px',position:'relative',overflow:'hidden'}}>
+        {/* Location + refresh */}
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:20}}>
+          <div>
+            <div style={{fontSize:18,fontWeight:800,color:'#F5F0E8'}}>{weather.place}</div>
+            {weather.state&&<div style={{fontSize:14,color:'rgba(255,255,255,0.5)',marginTop:2}}>{weather.state}</div>}
+          </div>
+          <button style={{background:'rgba(255,255,255,0.12)',border:'none',color:'rgba(255,255,255,0.7)',borderRadius:12,padding:'10px 14px',fontSize:15,cursor:'pointer',fontWeight:700}} onClick={handleRefresh}>
+            {loading?'⟳':'↻'}
+          </button>
+        </div>
+
+        {/* Big temperature */}
+        <div style={{display:'flex',alignItems:'flex-start',gap:16,marginBottom:8}}>
+          <div style={{fontSize:80,lineHeight:1,filter:'drop-shadow(0 2px 8px rgba(0,0,0,0.3))'}}>
+            {cond.icon}
+          </div>
+          <div>
+            <div style={{fontSize:64,fontWeight:800,color:'#F5F0E8',lineHeight:1,letterSpacing:-2}}>
+              {Math.round(c?.temperature_2m)}°
+            </div>
+            <div style={{fontSize:16,color:'rgba(255,255,255,0.6)',marginTop:4}}>
+              Feels like {Math.round(c?.apparent_temperature)}°
+            </div>
+          </div>
+        </div>
+
+        <div style={{fontSize:18,fontWeight:700,color:'rgba(255,255,255,0.85)',marginBottom:18}}>
+          {cond.label}
+        </div>
+
+        {/* Stats row */}
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
+          {[
+            {icon:'💧',label:'Humidity',val:`${c?.relative_humidity_2m}%`},
+            {icon:'🌬️',label:'Wind',val:`${Math.round(c?.wind_speed_10m)} km/h ${windDir(c?.wind_direction_10m)}`},
+            {icon:'🌧️',label:'Precip',val:`${c?.precipitation} mm`},
+          ].map(s=>(
+            <div key={s.label} style={{background:'rgba(0,0,0,0.25)',borderRadius:12,padding:'12px 10px',textAlign:'center'}}>
+              <div style={{fontSize:20,marginBottom:4}}>{s.icon}</div>
+              <div style={{fontSize:15,fontWeight:800,color:'#F5F0E8'}}>{s.val}</div>
+              <div style={{fontSize:11,color:'rgba(255,255,255,0.45)',marginTop:2,textTransform:'uppercase',letterSpacing:.5}}>{s.label}</div>
+            </div>
+          ))}
+        </div>
+
+        {weather.updatedAt&&(
+          <div style={{marginTop:14,fontSize:12,color:'rgba(255,255,255,0.3)',textAlign:'center'}}>
+            Updated {timeSince(weather.updatedAt)}
+          </div>
+        )}
+      </div>
+
+      {/* Today's high/low + rain */}
+      {d&&(
+        <div style={{background:'#1C1C1C',borderRadius:16,padding:'18px'}}>
+          <div style={{fontSize:11,fontWeight:700,color:'#555',letterSpacing:2,textTransform:'uppercase',marginBottom:14}}>Today's Range</div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
+            <div style={{textAlign:'center'}}>
+              <div style={{fontSize:12,color:'#FF5C5C',fontWeight:700,marginBottom:4}}>HIGH</div>
+              <div style={{fontSize:26,fontWeight:800,color:'#F5F0E8'}}>{Math.round(d.temperature_2m_max[0])}°</div>
+            </div>
+            <div style={{textAlign:'center'}}>
+              <div style={{fontSize:12,color:'#60B8F0',fontWeight:700,marginBottom:4}}>LOW</div>
+              <div style={{fontSize:26,fontWeight:800,color:'#F5F0E8'}}>{Math.round(d.temperature_2m_min[0])}°</div>
+            </div>
+            <div style={{textAlign:'center'}}>
+              <div style={{fontSize:12,color:'#6DBF6D',fontWeight:700,marginBottom:4}}>RAIN</div>
+              <div style={{fontSize:26,fontWeight:800,color:'#F5F0E8'}}>{d.precipitation_probability_max[0]}%</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 6-day forecast */}
+      {d&&(
+        <div style={{background:'#1C1C1C',borderRadius:16,padding:'18px'}}>
+          <div style={{fontSize:11,fontWeight:700,color:'#555',letterSpacing:2,textTransform:'uppercase',marginBottom:14}}>6-Day Forecast</div>
+          <div style={{display:'flex',flexDirection:'column',gap:0}}>
+            {d.time.map((date,i)=>{
+              const fcond=wmo(d.weather_code[i]);
+              return(
+                <div key={date} style={{
+                  display:'flex',alignItems:'center',gap:14,padding:'13px 0',
+                  borderBottom:i<d.time.length-1?'1px solid #242424':'none',
+                }}>
+                  <div style={{width:80,fontSize:15,fontWeight:700,color:i===0?'#F0D060':'#888'}}>
+                    {dayName(date,i)}
+                  </div>
+                  <div style={{fontSize:26,flexShrink:0}}>{fcond.icon}</div>
+                  <div style={{flex:1,fontSize:13,color:'#666',fontWeight:600}}>{fcond.label}</div>
+                  {d.precipitation_probability_max[i]>20&&(
+                    <div style={{fontSize:12,color:'#60B8F0',fontWeight:700,marginRight:4}}>
+                      💧{d.precipitation_probability_max[i]}%
+                    </div>
+                  )}
+                  <div style={{display:'flex',gap:8,fontSize:15,fontWeight:700}}>
+                    <span style={{color:'#FF5C5C'}}>{Math.round(d.temperature_2m_max[i])}°</span>
+                    <span style={{color:'#444'}}>/</span>
+                    <span style={{color:'#60B8F0'}}>{Math.round(d.temperature_2m_min[i])}°</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {weather?.error&&(
+        <div style={{background:'#FF9E4A18',border:'1px solid #FF9E4A44',borderRadius:12,padding:'12px 16px',fontSize:14,color:'#FF9E4A',fontWeight:600}}>
+          ⚠ {weather.error}
+        </div>
+      )}
+
+      <p style={{...S.hint,marginTop:4}}>Open-Meteo · Bureau of Meteorology data · No API key · Location not stored or shared</p>
+    </div>
+  );
+}
+
+// ── Currency View ─────────────────────────────────────────────────────────────
+
+function CurrencyView({fx,onRefresh}){
+  const [loading,setLoading]=useState(false);
+  const [audAmount,setAudAmount]=useState('');
+
+  async function handleRefresh(){setLoading(true);await onRefresh();setLoading(false)}
+
+  const rates = fx?.rates||{};
+  const prev  = fx?.prev||{};
+  const hasRates = rates.USD&&rates.JPY;
+  const audVal = parseFloat(audAmount)||0;
+
+  function timeSince(iso){
+    if(!iso) return null;
+    const mins=Math.round((Date.now()-new Date(iso).getTime())/60000);
+    if(mins<1)  return 'just now';
+    if(mins<60) return `${mins}m ago`;
+    const hrs=Math.floor(mins/60);
+    if(hrs<24)  return `${hrs}h ago`;
+    return `${Math.floor(hrs/24)}d ago`;
+  }
+
+  function trend(code){
+    const cur=rates[code], prv=prev[code];
+    if(!prv||!cur||prv===cur) return {dir:'—',color:'#555'};
+    return cur>prv
+      ?{dir:'▲',color:'#6DBF6D',note:`up from ${code==='JPY'?prv.toFixed(2):prv.toFixed(4)}`}
+      :{dir:'▼',color:'#FF5C5C',note:`down from ${code==='JPY'?prv.toFixed(2):prv.toFixed(4)}`};
+  }
+
+  function fmtConverted(code){
+    const r=rates[code];
+    if(!r||!audVal) return null;
+    const v=audVal*r;
+    return code==='JPY'?`¥${Math.round(v).toLocaleString()}`:`$${v.toFixed(2)}`;
+  }
+
+  // Loading state
+  if(fx?.loading||loading){
+    return(
+      <div style={{textAlign:'center',marginTop:80}}>
+        <div style={{fontSize:48,marginBottom:16,animation:'spin 1s linear infinite'}}>↻</div>
+        <div style={{color:'#888',fontSize:16,fontWeight:600}}>Fetching rates…</div>
+        <div style={{color:'#555',fontSize:13,marginTop:8}}>Connecting to exchange rate servers</div>
+      </div>
+    );
+  }
+
+  return(
+    <div style={{display:'flex',flexDirection:'column',gap:14}}>
+
+      {/* Header */}
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <div>
+          <div style={{fontSize:13,fontWeight:700,color:'#666',letterSpacing:1,textTransform:'uppercase'}}>
+            Base: Australian Dollar (AUD)
+          </div>
+          {fx?.updatedAt&&(
+            <div style={{fontSize:13,color:'#444',marginTop:3,fontWeight:600}}>
+              Updated {timeSince(fx.updatedAt)}{fx.date?` · ${fx.date}`:''}
+            </div>
+          )}
+        </div>
+        <button style={{...S.fyNavBtn,width:54,height:54,fontSize:24}} onClick={handleRefresh}>↻</button>
+      </div>
+
+      {/* Error banner */}
+      {fx?.error&&(
+        <div style={{background:'#FF5C5C18',border:'1px solid #FF5C5C44',borderRadius:12,padding:'14px 16px',display:'flex',gap:12,alignItems:'center'}}>
+          <span style={{fontSize:20}}>⚠️</span>
+          <div>
+            <div style={{fontSize:14,color:'#FF9E4A',fontWeight:700}}>{fx.error}</div>
+            {hasRates&&<div style={{fontSize:12,color:'#666',marginTop:3}}>Showing last cached rates below</div>}
+          </div>
+        </div>
+      )}
+
+      {/* No data yet */}
+      {!hasRates&&!fx?.error&&!fx?.loading&&(
+        <div style={{textAlign:'center',marginTop:40}}>
+          <div style={{fontSize:48,marginBottom:16}}>💱</div>
+          <div style={{color:'#888',fontSize:16,fontWeight:600,marginBottom:8}}>No rates loaded yet</div>
+          <button style={{...S.actionBtn,padding:'14px 28px',margin:'0 auto'}} onClick={handleRefresh}>
+            Fetch Rates
+          </button>
+        </div>
+      )}
+
+      {/* Rate cards */}
+      {hasRates&&Object.entries(FX_CURRENCIES).map(([code,cur])=>{
+        const t=trend(code);
+        const rate=rates[code];
+        return(
+          <div key={code} style={{background:'#1C1C1C',borderRadius:16,overflow:'hidden',border:`1px solid ${cur.color}22`}}>
+            {/* Card header stripe */}
+            <div style={{background:cur.color+'18',padding:'16px 18px',display:'flex',alignItems:'center',justifyContent:'space-between',borderBottom:`1px solid ${cur.color}22`}}>
+              <div style={{display:'flex',alignItems:'center',gap:12}}>
+                <span style={{fontSize:30}}>{cur.flag}</span>
+                <div>
+                  <div style={{fontSize:16,fontWeight:800,color:'#F5F0E8'}}>{cur.label}</div>
+                  <div style={{fontSize:12,color:'#666',fontWeight:600,letterSpacing:1}}>{code}</div>
+                </div>
+              </div>
+              <div style={{textAlign:'right'}}>
+                <span style={{fontSize:22,fontWeight:800,color:t.color}}>{t.dir}</span>
+                {t.note&&<div style={{fontSize:11,color:'#555',marginTop:2}}>{t.note}</div>}
+              </div>
+            </div>
+
+            <div style={{padding:'18px'}}>
+              {/* Big rate */}
+              <div style={{textAlign:'center',marginBottom:16}}>
+                <div style={{fontSize:12,color:'#555',fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',marginBottom:6}}>
+                  1 AUD =
+                </div>
+                <div style={{fontSize:44,fontWeight:800,color:cur.color,letterSpacing:-1,lineHeight:1}}>
+                  {cur.symbol}{code==='JPY'?rate.toFixed(2):rate.toFixed(4)}
+                </div>
+              </div>
+
+              {/* Quick-reference grid */}
+              <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8}}>
+                {[10,50,100,500].map(amt=>(
+                  <div key={amt} style={{background:'#141414',borderRadius:10,padding:'10px 6px',textAlign:'center'}}>
+                    <div style={{fontSize:11,color:'#555',fontWeight:700,marginBottom:5}}>A${amt}</div>
+                    <div style={{fontSize:13,fontWeight:800,color:'#F5F0E8',lineHeight:1.2}}>
+                      {code==='JPY'
+                        ?`¥${Math.round(amt*rate).toLocaleString()}`
+                        :`$${(amt*rate).toFixed(2)}`}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+
+      {/* Converter */}
+      {hasRates&&(
+        <div style={{background:'#1C1C1C',borderRadius:16,padding:'20px 18px'}}>
+          <div style={{fontSize:12,fontWeight:700,color:'#555',textTransform:'uppercase',letterSpacing:1.5,marginBottom:14}}>
+            Quick Converter
+          </div>
+          <div style={{position:'relative',marginBottom:14}}>
+            <div style={{position:'absolute',left:18,top:'50%',transform:'translateY(-50%)',fontSize:19,fontWeight:800,color:'#F0D060',pointerEvents:'none'}}>A$</div>
+            <input
+              style={{...S.input,paddingLeft:54,fontSize:22,fontWeight:800,color:'#F0D060'}}
+              type="number" inputMode="decimal" placeholder="0.00"
+              value={audAmount} onChange={e=>setAudAmount(e.target.value)}/>
+          </div>
+          {audVal>0
+            ?Object.entries(FX_CURRENCIES).map(([code,cur])=>(
+              <div key={code} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'16px',background:'#141414',borderRadius:12,marginBottom:8}}>
+                <div style={{display:'flex',alignItems:'center',gap:12}}>
+                  <span style={{fontSize:24}}>{cur.flag}</span>
+                  <span style={{fontSize:15,fontWeight:700,color:'#777'}}>{cur.label}</span>
+                </div>
+                <span style={{fontSize:24,fontWeight:800,color:cur.color}}>{fmtConverted(code)}</span>
+              </div>
+            ))
+            :<div style={{textAlign:'center',color:'#333',fontSize:15,padding:'10px 0',fontWeight:600}}>
+              Enter an AUD amount to convert
+            </div>}
+        </div>
+      )}
+
+      <p style={{...S.hint,marginTop:2}}>
+        Frankfurter (ECB) · backup: currency-api · No API key · Cached hourly
+      </p>
+    </div>
+  );
+}
+
+// ── Fuel View ─────────────────────────────────────────────────────────────────
+
+function FuelView({entries,onEdit,onDelete,onAdd}){
+  const [viewFY, setViewFY] = useState(()=>getCurrentFY());
+
+  const curFY  = getCurrentFY();
+  const prevFY = {start:curFY.start-1,end:curFY.end-1};
+
+  const fyEntries=entries.filter(e=>inFY(e.date,viewFY));
+  const fyTotals =fuelTotals(fyEntries);
+  const months   =groupFuelByMonth(fyEntries);
+
+  function shiftFY(dir){setViewFY(fy=>({start:fy.start+dir,end:fy.end+dir}))}
+
+  if(entries.length===0){
+    return(
+      <div style={{display:'flex',flexDirection:'column',gap:16}}>
+        <div style={S.empty}>{'No fuel entries yet.\nTap + to record your first fill-up.'}</div>
+      </div>
+    );
+  }
+
+  return(
+    <div style={{display:'flex',flexDirection:'column',gap:12}}>
+
+      {/* FY Summary card */}
+      <div style={S.fuelSummaryCard}>
+        {/* FY selector */}
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
+          <button style={S.fyNavBtn} onClick={()=>shiftFY(-1)}>‹</button>
+          <div style={{textAlign:'center'}}>
+            <div style={{fontSize:12,fontWeight:700,letterSpacing:2,color:'#888',textTransform:'uppercase',marginBottom:2}}>Financial Year</div>
+            <div style={{fontSize:18,fontWeight:800,color:'#F5F0E8'}}>{fyLabel(viewFY)}</div>
+          </div>
+          <button style={{...S.fyNavBtn,opacity:viewFY.start>=curFY.start?.35:1}} onClick={()=>{if(viewFY.start<curFY.start)shiftFY(1)}}>›</button>
+        </div>
+
+        {/* Grand total */}
+        <div style={{textAlign:'center',marginBottom:16,borderBottom:'1px solid #2A2A2A',paddingBottom:16}}>
+          <div style={{fontSize:36,fontWeight:800,color:'#F0D060',letterSpacing:-1}}>${fmt$(fyTotals.total)}</div>
+          <div style={{fontSize:13,color:'#666',marginTop:4,fontWeight:600}}>
+            {fyTotals.count} fill-up{fyTotals.count!==1?'s':''}{fyTotals.litres>0?` · ${fmtL(fyTotals.litres)}`:''}
+          </div>
+        </div>
+
+        {/* Payment method breakdown */}
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
+          {[
+            {key:'business',val:fyTotals.business},
+            {key:'living',  val:fyTotals.living},
+            {key:'cash',    val:fyTotals.cash},
+          ].map(({key,val})=>{
+            const pm=PAYMENT_METHODS[key];
+            return(
+              <div key={key} style={{background:'#1A1A1A',borderRadius:10,padding:'10px 8px',textAlign:'center',border:`1px solid ${pm.color}22`}}>
+                <div style={{fontSize:18,marginBottom:4}}>{pm.icon}</div>
+                <div style={{fontSize:13,fontWeight:800,color:pm.color}}>${fmt$(val)}</div>
+                <div style={{fontSize:10,color:'#555',fontWeight:700,marginTop:2,textTransform:'uppercase',letterSpacing:.5}}>{pm.short}</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Monthly sections */}
+      {months.length===0
+        ?<div style={{color:'#444',textAlign:'center',fontSize:15,padding:'20px 0'}}>No entries for {fyLabel(viewFY)}</div>
+        :months.map(group=><MonthGroup key={group.key} group={group} onEdit={onEdit} onDelete={onDelete}/>)
+      }
+
+      <p style={S.hint}>Swipe left on an entry to delete it</p>
+    </div>
+  );
+}
+
+function MonthGroup({group,onEdit,onDelete}){
+  const [open,setOpen]=useState(true);
+  const totals=fuelTotals(group.entries);
+  const sorted=[...group.entries].sort((a,b)=>b.date.localeCompare(a.date));
+  return(
+    <div>
+      {/* Month header */}
+      <div style={S.monthHeader} onClick={()=>setOpen(o=>!o)}>
+        <div style={{display:'flex',alignItems:'center',gap:10}}>
+          <span style={{fontSize:15,fontWeight:800,color:'#F5F0E8'}}>{group.label}</span>
+          <span style={{fontSize:12,fontWeight:700,color:'#888'}}>{totals.count} fill-up{totals.count!==1?'s':''}</span>
+          {totals.litres>0&&<span style={{fontSize:12,color:'#555',fontWeight:600}}>{fmtL(totals.litres)}</span>}
+        </div>
+        <div style={{display:'flex',alignItems:'center',gap:12}}>
+          <span style={{fontSize:17,fontWeight:800,color:'#F0D060'}}>${fmt$(totals.total)}</span>
+          <span style={{color:'#444',fontSize:13}}>{open?'▲':'▼'}</span>
+        </div>
+      </div>
+
+      {/* Payment breakdown bar */}
+      {open&&totals.total>0&&(
+        <div style={{display:'flex',gap:6,padding:'0 0 8px',flexWrap:'wrap'}}>
+          {['business','living','cash'].filter(k=>totals[k]>0).map(k=>{
+            const pm=PAYMENT_METHODS[k];
+            return(
+              <span key={k} style={{fontSize:12,fontWeight:700,color:pm.color,background:pm.bg,borderRadius:6,padding:'3px 9px'}}>
+                {pm.icon} ${fmt$(totals[k])}
+              </span>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Entries */}
+      {open&&(
+        <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:6}}>
+          {sorted.map(entry=>(
+            <SwipeCard key={entry.id}
+              onSwipeRight={()=>onEdit(entry)}
+              onSwipeLeft={()=>onDelete(entry.id)}
+              rightIcon="✏" rightColor="#888">
+              <FuelEntry entry={entry} onEdit={()=>onEdit(entry)}/>
+            </SwipeCard>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FuelEntry({entry,onEdit}){
+  const pm=PAYMENT_METHODS[entry.paymentMethod]||PAYMENT_METHODS.cash;
+  const d=new Date(entry.date);
+  const dateStr=d.toLocaleDateString([],{weekday:'short',day:'numeric',month:'short'});
+  return(
+    <div style={S.fuelEntry} onClick={onEdit}>
+      <div style={{...S.fuelEntryStripe,background:pm.color}}/>
+      <div style={{flex:1,display:'flex',alignItems:'center',gap:12,paddingRight:14,minWidth:0}}>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{display:'flex',alignItems:'baseline',gap:10,marginBottom:4,flexWrap:'wrap'}}>
+            <span style={{fontSize:20,fontWeight:800,color:'#F5F0E8'}}>${fmt$(entry.cost)}</span>
+            {entry.litres>0&&<span style={{fontSize:14,color:'#888',fontWeight:600}}>{fmtL(entry.litres)}</span>}
+            {entry.litres>0&&entry.cost>0&&<span style={{fontSize:13,color:'#555',fontWeight:600}}>${(entry.cost/entry.litres).toFixed(3)}/L</span>}
+          </div>
+          <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+            <span style={{fontSize:13,color:'#666',fontWeight:600}}>{dateStr}</span>
+            <span style={{fontSize:12,fontWeight:700,color:pm.color,background:pm.bg,borderRadius:5,padding:'2px 8px'}}>{pm.icon} {pm.short}</span>
+            {entry.notes&&<span style={{fontSize:13,color:'#555',fontStyle:'italic',overflow:'hidden',whiteSpace:'nowrap',textOverflow:'ellipsis',maxWidth:140}}>{entry.notes}</span>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Fuel Form ─────────────────────────────────────────────────────────────────
+
+function FuelForm({initial,defaultMethod,onSave,onClose}){
+  const [date,          setDate]          = useState(initial?.date          ||todayStr());
+  const [cost,          setCost]          = useState(initial?.cost!=null    ?String(initial.cost):'');
+  const [litres,        setLitres]        = useState(initial?.litres>0      ?String(initial.litres):'');
+  const [paymentMethod, setPaymentMethod] = useState(initial?.paymentMethod ||defaultMethod||'business');
+  const [notes,         setNotes]         = useState(initial?.notes         ||'');
+
+  function handleSave(){
+    const c=parseFloat(cost);
+    if(isNaN(c)||c<=0){return}
+    onSave({
+      date,
+      cost:Math.round(c*100)/100,
+      litres:litres?Math.round(parseFloat(litres)*10)/10:0,
+      paymentMethod,
+      notes:notes.trim(),
+    });
+  }
+
+  const cph=litres&&cost&&parseFloat(litres)>0?`$${(parseFloat(cost)/parseFloat(litres)).toFixed(3)}/L`:'';
+
+  return(
+    <div style={S.overlay} onClick={onClose}>
+      <div style={{...S.modal,paddingBottom:'max(36px,calc(24px + env(safe-area-inset-bottom)))'}} onClick={e=>e.stopPropagation()}>
+        <div style={S.modalHeader}>
+          <span style={S.modalTitle}>{initial?'Edit Fill-up':'Record Fill-up'}</span>
+          <button style={S.closeBtn} onClick={onClose}>✕</button>
+        </div>
+
+        <label style={S.label}>Date</label>
+        <input style={S.input} type="date" value={date} onChange={e=>setDate(e.target.value)}/>
+
+        <label style={S.label}>Total cost ($)</label>
+        <input style={{...S.input,fontSize:22,fontWeight:800,color:'#F0D060'}}
+          type="number" inputMode="decimal" placeholder="0.00" step="0.01" min="0"
+          value={cost} onChange={e=>setCost(e.target.value)}/>
+
+        <label style={S.label}>Litres (optional)</label>
+        <div style={{position:'relative'}}>
+          <input style={S.input} type="number" inputMode="decimal" placeholder="0.0" step="0.1" min="0"
+            value={litres} onChange={e=>setLitres(e.target.value)}/>
+          {cph&&<span style={{position:'absolute',right:16,top:'50%',transform:'translateY(-50%)',fontSize:14,color:'#888',fontWeight:700,pointerEvents:'none'}}>{cph}</span>}
+        </div>
+
+        <label style={S.label}>Paid with</label>
+        <div style={{display:'flex',flexDirection:'column',gap:8}}>
+          {Object.entries(PAYMENT_METHODS).map(([k,pm])=>(
+            <button key={k}
+              style={{...S.payMethodBtn,...(paymentMethod===k?{background:pm.bg,borderColor:pm.color,color:pm.color}:{})}}
+              onClick={()=>setPaymentMethod(k)}>
+              <span style={{fontSize:20}}>{pm.icon}</span>
+              <span style={{fontWeight:700}}>{pm.label}</span>
+              {paymentMethod===k&&<span style={{marginLeft:'auto',fontWeight:800}}>✓</span>}
+            </button>
+          ))}
+        </div>
+
+        <label style={S.label}>Notes (optional)</label>
+        <input style={S.input} placeholder="e.g. Shell Launceston, highway run…"
+          value={notes} onChange={e=>setNotes(e.target.value)}/>
+
+        <button style={S.saveBtn} onClick={handleSave}>{initial?'Save Changes':'Save Fill-up'}</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Projects View ─────────────────────────────────────────────────────────────
+
+function ProjectsView({active,archived,onEdit,onDelete,onUpdateTasks,onUpdateStatus,onAddLog,onDeleteLog}){
+  const [showArchived,setShowArchived]=useState(false);
+  if(active.length===0&&archived.length===0)return<div style={S.empty}>{'No projects yet.\nTap + to create one.'}</div>;
+  return(
+    <div style={{display:'flex',flexDirection:'column',gap:10}}>
+      {active.map(p=><ProjectCard key={p.id} project={p} onEdit={()=>onEdit(p)} onDelete={()=>onDelete(p.id)} onUpdateTasks={t=>onUpdateTasks(p.id,t)} onUpdateStatus={s=>onUpdateStatus(p.id,s)} onAddLog={t=>onAddLog(p.id,t)} onDeleteLog={eid=>onDeleteLog(p.id,eid)}/>)}
+      {archived.length>0&&(
+        <>
+          <button style={S.archivedToggle} onClick={()=>setShowArchived(s=>!s)}>
+            {showArchived?'▲':'▼'} Archived · {archived.length}
+          </button>
+          {showArchived&&archived.map(p=><ProjectCard key={p.id} project={p} onEdit={()=>onEdit(p)} onDelete={()=>onDelete(p.id)} onUpdateTasks={t=>onUpdateTasks(p.id,t)} onUpdateStatus={s=>onUpdateStatus(p.id,s)} onAddLog={t=>onAddLog(p.id,t)} onDeleteLog={eid=>onDeleteLog(p.id,eid)}/>)}
+        </>
+      )}
+    </div>
+  );
+}
+
+function ProjectCard({project,onEdit,onDelete,onUpdateTasks,onUpdateStatus,onAddLog,onDeleteLog}){
+  const [expanded, setExpanded]=useState(false);
+  const [newTask,  setNewTask] =useState('');
+  const [newLog,   setNewLog]  =useState('');
+  const [logTab,   setLogTab]  =useState('tasks');
+  const taskInputRef=useRef(null);
+  const cat=PROJECT_CATS[project.category]||PROJECT_CATS.general;
+  const status=PROJECT_STATUSES[project.status]||PROJECT_STATUSES.active;
+  const tasks=project.tasks||[],log=project.log||[];
+  const done=tasks.filter(t=>t.done).length,pct=tasks.length>0?Math.round((done/tasks.length)*100):0;
+  const archived=project.status==='done';
+  const deadlineOverdue=project.dueDate&&isOverdue(project.dueDate)&&!archived;
+  const deadlineToday  =project.dueDate&&isToday(project.dueDate)&&!archived;
+  function toggleTask(id){onUpdateTasks(tasks.map(t=>t.id===id?{...t,done:!t.done}:t))}
+  function addTask(){if(!newTask.trim())return;onUpdateTasks([...tasks,{id:Date.now().toString(),text:newTask.trim(),done:false}]);setNewTask('');taskInputRef.current?.focus()}
+  function deleteTask(id){onUpdateTasks(tasks.filter(t=>t.id!==id))}
+  function submitLog(){if(!newLog.trim())return;onAddLog(newLog.trim());setNewLog('')}
+  return(
+    <div style={{...S.projCard,opacity:archived?.6:1,outline:deadlineOverdue?'2px solid #FF5C5C33':deadlineToday?'2px solid #F0D06033':'none'}}>
+      <div style={{...S.cardStripe,background:archived?'#2E2E2E':deadlineOverdue?'#FF5C5C':deadlineToday?'#F0D060':cat.color}}/>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{display:'flex',alignItems:'flex-start',gap:10,paddingRight:14,cursor:'pointer'}} onClick={()=>setExpanded(e=>!e)}>
+          <div style={{flex:1,minWidth:0}}>
+            <span style={{display:'block',fontSize:19,fontWeight:800,color:archived?'#555':'#F5F0E8',marginBottom:7,wordBreak:'break-word'}}>{project.name}</span>
+            <div style={{display:'flex',gap:7,flexWrap:'wrap',alignItems:'center'}}>
+              <span style={{fontSize:12,fontWeight:700,color:archived?'#444':cat.color,background:archived?'#222':cat.bg,borderRadius:6,padding:'3px 9px'}}>{cat.icon} {cat.label}</span>
+              <span style={{fontSize:12,fontWeight:700,color:status.color,background:status.color+'18',borderRadius:6,padding:'3px 9px'}}>{status.label}</span>
+              {tasks.length>0&&<span style={{fontSize:12,color:'#666',fontWeight:600}}>{done}/{tasks.length} tasks</span>}
+              {log.length>0&&<span style={{fontSize:12,color:'#555',fontWeight:600}}>📝 {log.length}</span>}
+              {project.dueDate&&<span style={{fontSize:12,fontWeight:700,color:deadlineOverdue?'#FF5C5C':deadlineToday?'#F0D060':'#888'}}>{deadlineOverdue?'⚠ Deadline: ':deadlineToday?'⏰ Due: ':'📅 '}{formatDate(project.dueDate)}</span>}
+            </div>
+          </div>
+          <span style={{color:'#444',fontSize:13,flexShrink:0,marginTop:4}}>{expanded?'▲':'▼'}</span>
+        </div>
+        {tasks.length>0&&(
+          <div style={{height:4,background:'#252525',borderRadius:2,margin:'12px 14px 0 0',overflow:'hidden'}}>
+            <div style={{height:'100%',width:`${pct}%`,background:pct===100?'#6DBF6D':cat.color,borderRadius:2,transition:'width .3s'}}/>
+          </div>
+        )}
+        {expanded&&(
+          <div style={{marginTop:14,borderTop:'1px solid #242424',paddingTop:14,paddingRight:14}}>
+            {project.description&&<p style={{fontSize:15,color:'#9A9080',lineHeight:1.6,marginBottom:14,fontWeight:500}}>{project.description}</p>}
+            <div style={{display:'flex',gap:4,marginBottom:14}}>
+              {['tasks','log'].map(t=>(
+                <button key={t} style={{...S.miniTab,...(logTab===t?S.miniTabActive:{})}} onClick={()=>setLogTab(t)}>
+                  {t==='tasks'?`Tasks (${tasks.length})`:`Notes Log (${log.length})`}
+                </button>
+              ))}
+            </div>
+            {logTab==='tasks'&&(
+              <>
+                {tasks.length>0&&(
+                  <div style={{display:'flex',flexDirection:'column',gap:7,marginBottom:12}}>
+                    {tasks.map(task=>(
+                      <div key={task.id} style={{display:'flex',alignItems:'center',gap:10}}>
+                        <div style={{...S.checkbox,width:34,height:34,flexShrink:0,background:task.done?'#6DBF6D':'transparent',borderColor:task.done?'#6DBF6D':'#3A3A3A'}} onClick={()=>toggleTask(task.id)}>
+                          {task.done&&<span style={{color:'#141414',fontSize:16,fontWeight:900}}>✓</span>}
+                        </div>
+                        <span style={{flex:1,fontSize:17,fontWeight:600,color:task.done?'#444':'#DDD',textDecoration:task.done?'line-through':'none',wordBreak:'break-word'}}>{task.text}</span>
+                        <button style={{background:'transparent',border:'none',color:'#444',fontSize:20,cursor:'pointer',padding:'4px 10px',flexShrink:0}} onClick={()=>deleteTask(task.id)}>✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {!archived&&(
+                  <div style={{display:'flex',gap:8,marginBottom:14}}>
+                    <input ref={taskInputRef} style={{...S.input,flex:1,padding:'10px 14px',fontSize:15}} placeholder="Add a task…" value={newTask} onChange={e=>setNewTask(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')addTask()}}/>
+                    <button style={{...S.actionBtn,padding:'10px 18px',fontSize:18,flexShrink:0}} onClick={addTask}>+</button>
+                  </div>
+                )}
+                {tasks.length===0&&archived&&<p style={{color:'#444',fontSize:14,marginBottom:14}}>No tasks recorded.</p>}
+              </>
+            )}
+            {logTab==='log'&&(
+              <>
+                {!archived&&(
+                  <div style={{display:'flex',gap:8,marginBottom:12}}>
+                    <textarea style={{...S.input,flex:1,padding:'10px 14px',fontSize:15,height:72,resize:'none'}} placeholder="Add a note or update…" value={newLog} onChange={e=>setNewLog(e.target.value)}/>
+                    <button style={{...S.actionBtn,padding:'10px 16px',fontSize:15,flexShrink:0,alignSelf:'flex-end'}} onClick={submitLog}>Add</button>
+                  </div>
+                )}
+                {log.length===0
+                  ?<p style={{color:'#444',fontSize:14,marginBottom:14}}>No notes yet.</p>
+                  :<div style={{display:'flex',flexDirection:'column',gap:8,marginBottom:14}}>
+                    {log.map(entry=>(
+                      <div key={entry.id} style={{background:'#1A1A1A',borderRadius:10,padding:'10px 12px'}}>
+                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:5}}>
+                          <span style={{fontSize:11,color:'#555',fontWeight:600}}>{new Date(entry.createdAt).toLocaleDateString([],{day:'numeric',month:'short',year:'numeric'})} · {new Date(entry.createdAt).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</span>
+                          {!archived&&<button style={{background:'transparent',border:'none',color:'#444',fontSize:18,cursor:'pointer',padding:'2px 8px'}} onClick={()=>onDeleteLog(entry.id)}>✕</button>}
+                        </div>
+                        <p style={{fontSize:15,color:'#C0B89A',lineHeight:1.55,fontWeight:500}}>{entry.text}</p>
+                      </div>
+                    ))}
+                  </div>}
+              </>
+            )}
+            <div style={{display:'flex',gap:8,flexWrap:'wrap',borderTop:'1px solid #242424',paddingTop:12}}>
+              {!archived&&<button style={S.actionBtn} onClick={onEdit}>Edit Project</button>}
+              {project.status==='active'&&<button style={{...S.actionBtn,color:'#FF9E4A',borderColor:'#FF9E4A33'}} onClick={()=>onUpdateStatus('hold')}>Pause</button>}
+              {project.status==='hold'  &&<button style={{...S.actionBtn,color:'#6DBF6D',borderColor:'#6DBF6D33'}} onClick={()=>onUpdateStatus('active')}>Resume</button>}
+              {project.status!=='done'  &&<button style={{...S.actionBtn,color:'#888',  borderColor:'#88888833'}} onClick={()=>onUpdateStatus('done')}>Archive</button>}
+              {project.status==='done'  &&<button style={{...S.actionBtn,color:'#6DBF6D',borderColor:'#6DBF6D33'}} onClick={()=>onUpdateStatus('active')}>Restore</button>}
+              <button style={{...S.actionBtn,...S.deleteBtn}} onClick={onDelete}>Delete</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ProjectForm({initial,onSave,onClose}){
+  const [name,       setName]       =useState(initial?.name        ||'');
+  const [category,   setCategory]   =useState(initial?.category    ||'general');
+  const [status,     setStatus]     =useState(initial?.status      ||'active');
+  const [dueDate,    setDueDate]    =useState(initial?.dueDate     ||'');
+  const [description,setDescription]=useState(initial?.description ||'');
+  function handleSave(){if(!name.trim())return;onSave({name:name.trim(),category,status,dueDate:dueDate||null,description:description.trim()})}
+  return(
+    <div style={S.overlay} onClick={onClose}>
+      <div style={{...S.modal,paddingBottom:'max(36px,calc(24px + env(safe-area-inset-bottom)))'}} onClick={e=>e.stopPropagation()}>
+        <div style={S.modalHeader}>
+          <span style={S.modalTitle}>{initial?'Edit Project':'New Project'}</span>
+          <button style={S.closeBtn} onClick={onClose}>✕</button>
+        </div>
+        <label style={S.label}>Project name</label>
+        <input style={S.input} placeholder="Name your project…" value={name} onChange={e=>setName(e.target.value)} autoFocus/>
+        <label style={S.label}>Category</label>
+        <div style={S.segGroup}>
+          {Object.entries(PROJECT_CATS).map(([k,v])=>(
+            <button key={k} style={{...S.segBtn,...(category===k?{background:v.bg,borderColor:v.color,color:v.color}:{})}} onClick={()=>setCategory(k)}>{v.icon} {v.label}</button>
+          ))}
+        </div>
+        <label style={S.label}>Status</label>
+        <div style={S.segGroup}>
+          {Object.entries(PROJECT_STATUSES).map(([k,v])=>(
+            <button key={k} style={{...S.segBtn,...(status===k?{background:v.color+'22',borderColor:v.color,color:v.color}:{})}} onClick={()=>setStatus(k)}>{v.label}</button>
+          ))}
+        </div>
+        <label style={S.label}>Target deadline (optional)</label>
+        <input style={S.input} type="date" value={dueDate} onChange={e=>setDueDate(e.target.value)}/>
+        <label style={S.label}>Description (optional)</label>
+        <textarea style={{...S.input,height:90,resize:'none'}} placeholder="What's this project about?" value={description} onChange={e=>setDescription(e.target.value)}/>
+        <button style={S.saveBtn} onClick={handleSave}>{initial?'Save Changes':'Create Project'}</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Shopping ──────────────────────────────────────────────────────────────────
+
+function ShoppingList({items,onCompleteMultiple,onDelete,onEdit}){
+  const [checked,setChecked]=useState(new Set());
+  function toggle(id){setChecked(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);return n})}
+  function clearChecked(){onCompleteMultiple([...checked]);setChecked(new Set())}
+  const pending=items.filter(i=>!checked.has(i.id)),inBasket=items.filter(i=>checked.has(i.id));
+  if(items.length===0)return<div style={{...S.empty,marginTop:80}}>{'Your shopping list is empty.\nTap + to add items.'}</div>;
+  return(
+    <div style={{display:'flex',flexDirection:'column',gap:6}}>
+      {pending.map(item=>(
+        <SwipeCard key={item.id} onSwipeRight={()=>toggle(item.id)} onSwipeLeft={()=>onDelete(item.id)} rightIcon="✓" rightColor="#6DBF6D">
+          <ShopRow item={item} checked={false} onToggle={()=>toggle(item.id)} onEdit={()=>onEdit(item)}/>
+        </SwipeCard>
+      ))}
+      {inBasket.length>0&&(
+        <>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'14px 4px 6px'}}>
+            <span style={{fontSize:12,fontWeight:800,letterSpacing:1.5,color:'#555',textTransform:'uppercase'}}>In basket · {inBasket.length}</span>
+            <button style={S.doneShoppingBtn} onClick={clearChecked}>Done Shopping ✓</button>
+          </div>
+          {inBasket.map(item=>(
+            <SwipeCard key={item.id} onSwipeRight={()=>toggle(item.id)} onSwipeLeft={()=>onDelete(item.id)} rightIcon="↩" rightColor="#888">
+              <ShopRow item={item} checked={true} onToggle={()=>toggle(item.id)} onEdit={()=>onEdit(item)}/>
+            </SwipeCard>
+          ))}
+        </>
+      )}
+      <p style={{...S.hint,marginTop:6}}>Tap to add to basket · swipe left to delete</p>
+    </div>
+  );
+}
+
+function ShopRow({item,checked,onToggle,onEdit}){
+  const pc=PRIORITY_CONFIG[item.priority],rl=recurLabel(item.recurrence);
+  const overdue=!checked&&isOverdue(item.dueDate),todayDue=!checked&&isToday(item.dueDate);
+  return(
+    <div style={{...S.shopRow,opacity:checked?.42:1}} onClick={onToggle}>
+      <div style={{...S.checkbox,background:checked?'#6DBF6D':'transparent',borderColor:checked?'#6DBF6D':'#3A3A3A'}}>
+        {checked&&<span style={{color:'#141414',fontSize:15,fontWeight:900,lineHeight:1}}>✓</span>}
+      </div>
+      <div style={{flex:1,minWidth:0}}>
+        <span style={{display:'block',fontSize:18,fontWeight:700,color:checked?'#4A4A4A':'#F5F0E8',textDecoration:checked?'line-through':'none',wordBreak:'break-word',lineHeight:1.3}}>{item.title}</span>
+        {(rl||item.dueDate||item.notes)&&(
+          <div style={{display:'flex',gap:8,marginTop:5,flexWrap:'wrap',alignItems:'center'}}>
+            {rl&&<span style={S.recurChip}>↻ {rl}</span>}
+            {item.dueDate&&<span style={{fontSize:13,fontWeight:600,color:overdue?'#FF5C5C':todayDue?'#F0D060':'#666'}}>{overdue?'⚠ ':''}{formatDate(item.dueDate)}</span>}
+            {item.notes&&<span style={{fontSize:13,color:'#555',fontStyle:'italic',overflow:'hidden',whiteSpace:'nowrap',textOverflow:'ellipsis',maxWidth:160}}>{item.notes}</span>}
+          </div>
+        )}
+      </div>
+      <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:8,flexShrink:0}}>
+        <div style={{width:9,height:9,borderRadius:'50%',background:checked?'#2A2A2A':pc.color}}/>
+        <button style={S.shopEditBtn} onClick={e=>{e.stopPropagation();onEdit()}}>✏</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Shared card components ────────────────────────────────────────────────────
+
+function SectionHeader({label,color,count}){
+  return(
+    <div style={{display:'flex',alignItems:'center',gap:10,padding:'4px 2px'}}>
+      <div style={{width:3,height:16,borderRadius:2,background:color,flexShrink:0}}/>
+      <span style={{fontSize:11,fontWeight:800,letterSpacing:2,color,textTransform:'uppercase'}}>{label}</span>
+      <span style={{fontSize:11,fontWeight:700,color:color+'88',background:color+'18',borderRadius:10,padding:'1px 7px'}}>{count}</span>
+    </div>
+  );
+}
+
+function ItemCard({item,onComplete,onRestore,onEdit,onDelete}){
+  const [expanded,setExpanded]=useState(false);
+  const pc=PRIORITY_CONFIG[item.priority],tc=TYPE_CONFIG[item.type];
+  const overdue=!item.completedAt&&isOverdue(item.dueDate);
+  const tmrw=!item.completedAt&&isDueTomorrow(item.dueDate);
+  const todayDue=!item.completedAt&&isToday(item.dueDate);
+  const dateLabel=item.completedAt?`Done ${formatDate(item.completedAt)}`:formatDate(item.dueDate);
+  const rl=recurLabel(item.recurrence);
+  return(
+    <div style={{...S.card,opacity:item.completedAt?.5:1}}>
+      <div style={{...S.cardStripe,background:item.completedAt?'#2E2E2E':pc.color}}/>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={S.cardMain} onClick={()=>setExpanded(e=>!e)}>
+          <div style={S.cardLeft}>
+            <span style={S.typeBadge}>{tc.icon}</span>
+            <div style={S.cardContent}>
+              <span style={{...S.cardTitle,textDecoration:item.completedAt?'line-through':'none',color:item.completedAt?'#4A4A4A':'#F5F0E8'}}>{item.title}</span>
+              <div style={S.cardMeta}>
+                <span style={{...S.priorityChip,color:item.completedAt?'#4A4A4A':pc.color,background:item.completedAt?'#222':pc.bg}}>{pc.label}</span>
+                {rl&&<span style={S.recurChip}>↻ {rl}</span>}
+                {dateLabel&&<span style={{...S.dateLabel,color:overdue?'#FF5C5C':(tmrw||todayDue)?'#F0D060':'#777',fontWeight:(overdue||tmrw||todayDue)?700:500}}>{overdue?'⚠ ':tmrw?'⏰ ':''}{dateLabel}</span>}
+              </div>
+            </div>
+          </div>
+          <span style={S.chevron}>{expanded?'▲':'▼'}</span>
+        </div>
+        {expanded&&(
+          <div style={S.cardExpanded}>
+            {item.notes&&<p style={S.notes}>{item.notes}</p>}
+            {rl&&<p style={S.recurNote}>↻ Repeats {item.recurrence} — completing schedules the next one</p>}
+            <div style={S.actions}>
+              {!item.completedAt
+                ?<><button style={S.actionBtn} onClick={onComplete}>✓ Done</button><button style={S.actionBtn} onClick={onEdit}>Edit</button><button style={{...S.actionBtn,...S.deleteBtn}} onClick={onDelete}>Delete</button></>
+                :<><button style={S.actionBtn} onClick={onRestore}>↩ Restore</button><button style={{...S.actionBtn,...S.deleteBtn}} onClick={onDelete}>Delete</button></>}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ItemForm({initial,defaultType,onSave,onClose}){
+  const [title,      setTitle]     =useState(initial?.title      ||'');
+  const [type,       setType]      =useState(initial?.type       ||defaultType||'reminder');
+  const [priority,   setPriority]  =useState(initial?.priority   ||'medium');
+  const [dueDate,    setDueDate]   =useState(initial?.dueDate    ||'');
+  const [recurrence, setRecurrence]=useState(initial?.recurrence ||'none');
+  const [notes,      setNotes]     =useState(initial?.notes      ||'');
+  function handleSave(){if(!title.trim())return;onSave({title:title.trim(),type,priority,dueDate:dueDate||null,recurrence,notes:notes.trim()})}
+  return(
+    <div style={S.overlay} onClick={onClose}>
+      <div style={{...S.modal,paddingBottom:'max(36px,calc(24px + env(safe-area-inset-bottom)))'}} onClick={e=>e.stopPropagation()}>
+        <div style={S.modalHeader}>
+          <span style={S.modalTitle}>{initial?'Edit Item':'New Item'}</span>
+          <button style={S.closeBtn} onClick={onClose}>✕</button>
+        </div>
+        <label style={S.label}>What is it?</label>
+        <input style={S.input} placeholder="Enter title…" value={title} onChange={e=>setTitle(e.target.value)} autoFocus/>
+        <label style={S.label}>Type</label>
+        <div style={S.segGroup}>
+          {Object.entries(TYPE_CONFIG).map(([k,v])=>(
+            <button key={k} style={{...S.segBtn,...(type===k?S.segActive:{})}} onClick={()=>setType(k)}>{v.icon} {v.label}</button>
+          ))}
+        </div>
+        <label style={S.label}>Priority</label>
+        <div style={S.segGroup}>
+          {Object.entries(PRIORITY_CONFIG).map(([k,v])=>(
+            <button key={k} style={{...S.segBtn,...(priority===k?{background:v.bg,borderColor:v.color,color:v.color}:{})}} onClick={()=>setPriority(k)}>{v.label}</button>
+          ))}
+        </div>
+        <label style={S.label}>{type==='appointment'?'Date & Time':'Due Date'} (optional)</label>
+        <input style={S.input} type={type==='appointment'?'datetime-local':'date'} value={dueDate} onChange={e=>setDueDate(e.target.value)}/>
+        <label style={S.label}>Repeats</label>
+        <div style={S.segGroup}>
+          {Object.entries(RECUR_CONFIG).map(([k,v])=>(
+            <button key={k} style={{...S.segBtn,...(recurrence===k?S.segActive:{})}} onClick={()=>setRecurrence(k)}>{k!=='none'?'↻ ':''}{v}</button>
+          ))}
+        </div>
+        {recurrence!=='none'&&!dueDate&&<p style={{fontSize:13,color:'#FF9E4A',marginTop:4,fontWeight:600}}>⚠ Set a due date so the next occurrence can be calculated</p>}
+        <label style={S.label}>Notes (optional)</label>
+        <textarea style={{...S.input,height:80,resize:'none'}} placeholder="Any extra detail…" value={notes} onChange={e=>setNotes(e.target.value)}/>
+        <button style={S.saveBtn} onClick={handleSave}>{initial?'Save Changes':'Add to List'}</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Styles ────────────────────────────────────────────────────────────────────
+
+const S={
+  root:             {background:'#141414',minHeight:'100vh',display:'flex',flexDirection:'column',maxWidth:480,margin:'0 auto'},
+  toast:            {position:'fixed',bottom:32,left:'50%',transform:'translateX(-50%)',background:'#242424',color:'#F0D060',borderRadius:14,padding:'14px 22px',fontSize:16,fontWeight:700,zIndex:300,display:'flex',alignItems:'center',gap:16,boxShadow:'0 6px 28px rgba(0,0,0,.6)',whiteSpace:'nowrap'},
+  undoBtn:          {background:'#F0D06022',border:'2px solid #F0D060',color:'#F0D060',borderRadius:9,padding:'8px 18px',fontSize:15,fontWeight:800,cursor:'pointer'},
+  swipeBanner:      {background:'#1E1A2E',borderBottom:'1px solid #3A2D5A',padding:'14px 18px',display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,flexShrink:0},
+  swipeBannerClose: {background:'#C084FC22',border:'2px solid #C084FC',color:'#C084FC',borderRadius:10,padding:'10px 20px',fontSize:15,fontWeight:800,cursor:'pointer',whiteSpace:'nowrap'},
+  header:           {background:'#1C1C1C',borderBottom:'2px solid #242424',position:'sticky',top:0,zIndex:10,padding:'18px 18px 0'},
+  headerTop:        {display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16},
+  logo:             {fontSize:24,fontWeight:800,color:'#F5F0E8',letterSpacing:2},
+  addBtn:           {background:'#F0D060',color:'#141414',border:'none',borderRadius:'50%',width:54,height:54,fontSize:32,cursor:'pointer',fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0},
+  iconBtn:          {background:'#242424',border:'none',borderRadius:'50%',width:50,height:50,fontSize:22,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0},
+  searchInput:      {background:'#242424',border:'2px solid #333',borderRadius:14,color:'#F5F0E8',padding:'14px 18px',fontSize:17,fontWeight:600,width:'100%',outline:'none'},
+  settingsPanel:    {background:'#181818',border:'1px solid #242424',borderRadius:14,padding:'16px 18px',marginBottom:14,display:'flex',flexDirection:'column',gap:14},
+  sectionLbl:       {fontSize:11,letterSpacing:2,color:'#555',textTransform:'uppercase',fontWeight:700,marginBottom:2},
+  settingsRow:      {display:'flex',justifyContent:'space-between',alignItems:'center',gap:12},
+  settingsLabel:    {fontSize:16,fontWeight:600,color:'#CCC',flex:1},
+  sHint:            {fontSize:13,color:'#555',margin:0,lineHeight:1.6,fontStyle:'italic'},
+  toggleOn:         {background:'#F0D06033',border:'2px solid #F0D060',color:'#F0D060',borderRadius:10,padding:'10px 22px',fontSize:15,fontWeight:800,cursor:'pointer',minWidth:72,textAlign:'center'},
+  toggleOff:        {background:'#2A2A2A',border:'2px solid #444',color:'#666',borderRadius:10,padding:'10px 22px',fontSize:15,fontWeight:800,cursor:'pointer',minWidth:72,textAlign:'center'},
+  settingsSelect:   {background:'#2A2A2A',border:'2px solid #444',color:'#F5F0E8',borderRadius:10,padding:'10px 14px',fontSize:15,fontWeight:600,cursor:'pointer'},
+  dataBtn:          {background:'#242424',border:'2px solid #333',color:'#C0B89A',borderRadius:11,padding:'14px 18px',fontSize:16,fontWeight:700,cursor:'pointer',width:'100%'},
+  tabs:             {display:'flex',gap:0,marginBottom:14},
+  tabBtn:           {flex:1,background:'transparent',border:'none',color:'#555',fontSize:13,fontWeight:700,padding:'12px 4px',cursor:'pointer',borderBottom:'3px solid transparent',textAlign:'center',lineHeight:1.3},
+  tabActive:        {color:'#F0D060',borderBottom:'3px solid #F0D060'},
+  filters:          {display:'flex',gap:10,paddingBottom:16,overflowX:'auto'},
+  filterBtn:        {background:'transparent',border:'2px solid #2A2A2A',color:'#666',borderRadius:28,padding:'9px 20px',fontSize:15,fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'},
+  filterActive:     {background:'#242424',color:'#F0D060',borderColor:'#F0D06055'},
+  main:             {flex:1,padding:'14px 16px',display:'flex',flexDirection:'column',gap:10},
+  empty:            {color:'#444',textAlign:'center',marginTop:60,fontSize:17,lineHeight:2,whiteSpace:'pre-line',fontWeight:500},
+  hint:             {textAlign:'center',color:'#444',fontSize:13,marginTop:6,fontStyle:'italic'},
+  // Fuel
+  fuelSummaryCard:  {background:'#1C1C1C',borderRadius:16,padding:'20px 18px'},
+  fyNavBtn:         {background:'#242424',border:'none',color:'#888',fontSize:28,width:50,height:50,borderRadius:12,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700},
+  monthHeader:      {display:'flex',justifyContent:'space-between',alignItems:'center',padding:'16px 4px 10px',cursor:'pointer'},
+  fuelEntry:        {background:'#1C1C1C',borderRadius:14,padding:'16px 0',display:'flex',overflow:'hidden',cursor:'pointer'},
+  fuelEntryStripe:  {width:5,borderRadius:'14px 0 0 14px',flexShrink:0,marginRight:16},
+  payMethodBtn:     {background:'#222',border:'2px solid #2E2E2E',color:'#888',borderRadius:14,padding:'17px 18px',fontSize:17,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:14,width:'100%',textAlign:'left'},
+  // Projects
+  projCard:         {background:'#1C1C1C',borderRadius:14,padding:'18px 0',display:'flex',overflow:'hidden'},
+  archivedToggle:   {background:'transparent',border:'1px solid #2A2A2A',color:'#555',borderRadius:12,padding:'14px 18px',fontSize:15,fontWeight:700,cursor:'pointer',textAlign:'left'},
+  miniTab:          {background:'#222',border:'2px solid #2E2E2E',color:'#666',borderRadius:10,padding:'11px 18px',fontSize:15,fontWeight:700,cursor:'pointer'},
+  miniTabActive:    {background:'#F0D06018',borderColor:'#F0D060',color:'#F0D060'},
+  // Shopping
+  shopRow:          {background:'#1C1C1C',borderRadius:14,padding:'18px 16px',display:'flex',alignItems:'center',gap:16,cursor:'pointer'},
+  checkbox:         {width:38,height:38,borderRadius:'50%',border:'2.5px solid #3A3A3A',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'},
+  doneShoppingBtn:  {background:'#6DBF6D22',border:'2px solid #6DBF6D',color:'#6DBF6D',borderRadius:11,padding:'12px 20px',fontSize:15,fontWeight:800,cursor:'pointer',whiteSpace:'nowrap'},
+  shopEditBtn:      {background:'#2A2A2A',border:'none',color:'#888',fontSize:18,cursor:'pointer',lineHeight:1,padding:'8px 10px',flexShrink:0,borderRadius:8},
+  // Cards
+  card:             {background:'#1C1C1C',borderRadius:14,padding:'18px 14px 18px 0',display:'flex',overflow:'hidden'},
+  cardStripe:       {width:5,borderRadius:'14px 0 0 14px',flexShrink:0,marginRight:16},
+  cardMain:         {flex:1,display:'flex',alignItems:'center',gap:12,paddingRight:14,minWidth:0,cursor:'pointer'},
+  cardLeft:         {flex:1,display:'flex',gap:14,alignItems:'flex-start',minWidth:0},
+  typeBadge:        {fontSize:24,lineHeight:1,marginTop:3,flexShrink:0},
+  cardContent:      {flex:1,minWidth:0},
+  cardTitle:        {display:'block',fontSize:19,fontWeight:700,lineHeight:1.3,marginBottom:6,wordBreak:'break-word'},
+  cardMeta:         {display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'},
+  priorityChip:     {fontSize:12,fontWeight:700,borderRadius:7,padding:'4px 10px',textTransform:'uppercase',letterSpacing:.5},
+  recurChip:        {fontSize:12,fontWeight:700,color:'#777',background:'#252525',borderRadius:7,padding:'4px 10px'},
+  dateLabel:        {fontSize:14,color:'#777'},
+  chevron:          {color:'#555',fontSize:16,flexShrink:0},
+  cardExpanded:     {marginTop:16,borderTop:'1px solid #242424',paddingTop:16},
+  notes:            {fontSize:16,color:'#9A9080',lineHeight:1.6,margin:'0 0 12px',fontWeight:500},
+  recurNote:        {fontSize:14,color:'#666',margin:'0 0 14px',fontStyle:'italic'},
+  actions:          {display:'flex',gap:10,flexWrap:'wrap'},
+  actionBtn:        {background:'#222',border:'2px solid #2E2E2E',color:'#F0D060',borderRadius:12,padding:'14px 20px',fontSize:16,fontWeight:700,cursor:'pointer'},
+  deleteBtn:        {color:'#FF5C5C',borderColor:'#FF5C5C33'},
+  overlay:          {position:'fixed',inset:0,background:'rgba(0,0,0,.85)',zIndex:100,display:'flex',alignItems:'flex-end',justifyContent:'center'},
+  modal:            {background:'#1C1C1C',borderRadius:'28px 28px 0 0',padding:'26px 20px 36px',width:'100%',maxWidth:480,maxHeight:'92vh',overflowY:'auto',display:'flex',flexDirection:'column',gap:6},
+  modalHeader:      {display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14},
+  modalTitle:       {fontSize:22,fontWeight:800,color:'#F5F0E8'},
+  closeBtn:         {background:'#2A2A2A',border:'none',color:'#888',fontSize:20,cursor:'pointer',padding:'10px 16px',borderRadius:10,lineHeight:1},
+  label:            {fontSize:13,fontWeight:700,color:'#666',textTransform:'uppercase',letterSpacing:1.2,marginBottom:6,marginTop:16,display:'block'},
+  input:            {background:'#222',border:'2px solid #2E2E2E',borderRadius:14,color:'#F5F0E8',padding:'16px 18px',fontSize:18,fontWeight:600,width:'100%',outline:'none'},
+  segGroup:         {display:'flex',gap:10,flexWrap:'wrap'},
+  segBtn:           {background:'#222',border:'2px solid #2E2E2E',color:'#666',borderRadius:12,padding:'13px 18px',fontSize:16,fontWeight:600,cursor:'pointer'},
+  segActive:        {background:'#F0D06018',borderColor:'#F0D060',color:'#F0D060'},
+  saveBtn:          {background:'#F0D060',border:'none',borderRadius:16,color:'#141414',padding:'19px',fontSize:19,fontWeight:800,cursor:'pointer',marginTop:20,letterSpacing:.5},
+};
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+<script>
+  if('serviceWorker' in navigator){
+    window.addEventListener('load',()=>{
+      navigator.serviceWorker.register('./sw.js',{scope:'./'})
+        .then(r=>console.log('SW ready:',r.scope))
+        .catch(e=>console.warn('SW failed:',e));
+    });
+  }
+</script>
+</body>
+</html>
